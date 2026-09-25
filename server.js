@@ -1,7 +1,7 @@
 import express from "express"
 import dns from "node:dns"
 import "dotenv/config"
-import { connectDB } from "./config/db.js"
+import connectDB from "./config/db.js"
 
 const app = express()
 

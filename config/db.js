@@ -1,7 +1,7 @@
 import mongoose from "mongoose"
 
 //function to connect to the database
-export async function connectDB() {
+async function connectDB() {
     try {
         const atlas_string = process.env.ATLAS_STRING;
         await mongoose.connect(atlas_string);
@@ -11,3 +11,5 @@ export async function connectDB() {
         console.error("Connection error: ", error);
     }
 }
+
+export default connectDB
