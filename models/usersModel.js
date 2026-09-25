@@ -1,23 +1,23 @@
-import mongoose from mongoose
+import mongoose from "mongoose";
 
 //Added this so you can know where to continue from//
 const userSchema = new mongoose.Schema({
     email :{
         type:String,
         required:true,
-        unique:tNrue,
+        unique:true,
         trim: true,
         lowercase:true
     },
     passwordHash:{
         type:String,
-        reqiuired:true
+        required:true
     },
-    fristNmae:{
+    firstName:{
         type:String,
         required:true
     },
-    MiddelName:{
+    middleName:{
         type:String,
         required: true
     },
@@ -30,9 +30,11 @@ const userSchema = new mongoose.Schema({
         enum:['user','admin'],// restricts input to these roles
         default:'user'//for new signups
 
-    },
+}
+},{
     timestamps:true
 });
 
-const User = mongoose.model('User',userSchema);
-module.exports=User;
+const User = mongoose.model("User", userSchema);
+
+export default User;
