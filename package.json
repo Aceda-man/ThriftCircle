@@ -17,5 +17,12 @@
     "mongoose": "^9.10.2"
   },
   "devDependencies": {},
-  "type": "module"
+  "type": "module",
+  "allowScripts": {
+    "bcrypt@6.0.0": true,
+    "cors@2.8.6": true,
+    "dotenv@18.0.3": true,
+    "express@5.2.1": true,
+    "mongoose@9.10.2": true
+  }
 }
