@@ -50,10 +50,10 @@ const groupModelSchema = new mongoose.Schema(
             enum : ["active", "completed"],
             default : "active"
         },
-        
-        {
-        
-        timestamps : true
+    },
+    
+    {
+        timestamps: true
     }
 )
 
