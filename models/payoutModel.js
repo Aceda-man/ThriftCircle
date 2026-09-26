@@ -11,7 +11,7 @@ const payoutSchema = new mongoose.Schema({
     amount: {
         type: Number,
         required: true,
-        min: 1000// minimum payout amount is 1000 naira.
+        min: 0.1// minimum payout amount is 0.1naira.
     },
     currency: {
         type: String,
