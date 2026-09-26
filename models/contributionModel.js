@@ -1,21 +1,22 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const contributionModelSchema = new mongoose.Schema({
-    group_id: {
+    groupId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Group',
+        ref: "Group",
         required: true
     },
-    member_id: {
+    memberId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: "User",
         required: true
     },
     amount: {
         type: Number,
-        required: true
-    },
-    due_date: {
+        required: true,
+        min: [0.01, "Amount must be greater than 0"]
+        },
+    dueDate: {
         type: Date,
         required: true
     },
@@ -24,33 +25,37 @@ const contributionModelSchema = new mongoose.Schema({
         enum: ['DUE', 'PENDING_REVIEW', 'CONFIRMED', 'ISSUE', 'OVERDUE'],
         default: 'DUE'
     },
-    submitted_at: {
+    submittedAt: {
         type: Date,
         default: null
     },
-    confirmed_at: {
-        type: String,
+    confirmedAt: {
+        type: Date,
         default: null
     },
-    issue_reason: {
+    issueReason: {
         type: String,
-        default: null
+        trim: true,
+        default: null,
+        //for cassees when there is an issue, tell frontend
+        validate: {
+        validator: function (value) {
+                    return this.status !== "ISSUE" || (value && value.length > 0);
+                },
+                message: "issueReason is required when status is 'ISSUE'"
+            }
     }
 },
     {
-        timestamps: {
-            createdAt: 'created_at',
-            updatedAt: 'updated_at'
-        }
+        timestamps: true
     }
 );
+contributionModelSchema.index(
+    { groupId: 1, memberId: 1, dueDate: 1 },
+    { unique: true }
+);
 
-contributionModelSchema.index({
-    group_id: 1,
-    member_id: 1
-}); // This creates a database index that tells our MongoDb to sort entries in ascending order 
-
-const Contribution = mongoose.model('Contribution', contributionModelSchema); //complies the (contributionModelSchema) to an official mongoose model(Contribution)
+const Contribution = mongoose.model("Contribution", contributionModelSchema);
 
 
-export default Contribution; // to use this model - import Contribution from '../models/contributionModel.js'
+export default Contribution; 
