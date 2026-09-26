@@ -6,7 +6,7 @@ import connectDB from "./config/db.js"
 const app = express()
 
 
-dns.setServers(["8.8.8.8", "8.8.4.4"])
+dns.setServers(["8.8.8.8", "1.1.1.1"])
 
 //import connectDB function and call it to connect to the database
 connectDB();
