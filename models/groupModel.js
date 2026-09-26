@@ -2,66 +2,61 @@ import mongoose from "mongoose"
 
 const groupModelSchema = new mongoose.Schema(
     {
-        name : {
+        groupName : {
             type : String,
             required : true,
             trim : true
         },
-        organizer_id : {
+        organizerId : {
             type : mongoose.Schema.Types.ObjectId,
-            ref : User,
+            ref : "User",
             required : true
         },
-        contribution_amount : {
+        contributionAmount : {
             type : Number,
             required : true,
-            min : 1
+            min : [0.01, "Contribution amount must be greater than zero"]
         },
         frequency : {
             type : String,
             required : true,
             enum : ["daily", "weekly", "monthly"]
         },
-        start_date : {
+        startDate : {
             type : Date,
             required : true,
         },
-        contribution_deadline : {
+        contributionDeadline : {
             type : Date,
-            required : true       
+            required : true,
+            validate: {
+                validator: function (value) {
+                    return value >= this.startDate},
+                message: "Contribution deadline cannot be before the start date."}
         },
-        payout_order : {
-            type : mongoose.Schema.Types.ObjectId,
-            ref : "User",
-            default : []
-        },
-        invite_code : {
+        inviteCode : {
             type : String,
             required : true,
             unique : true,
             trim : true
         },
-        invite_token : {
+        inviteToken : {
             type : String,
-            required : true,
-            unique : true,
-            trim : true
+            sparse: true,
+            unique : true
         },
             status : {
             type : String,
             enum : ["active", "completed"],
             default : "active"
         },
-        created_at : {
-            type : Date,
-            default : Date.now
-        }
-    },
-    {
+        
+        {
+        
         timestamps : true
     }
 )
 
-const GroupModel = mongoose.model("GroupModel", groupModelSchema)
+const Group = mongoose.model("Group", groupModelSchema)
 
-export default GroupModel
+export default Group
