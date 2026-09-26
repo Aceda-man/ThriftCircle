@@ -2,9 +2,13 @@ import express from "express"
 import dns from "node:dns"
 import "dotenv/config"
 import connectDB from "./config/db.js"
+import router from "./routes/index.js";
 
 const app = express()
 
+
+app.use(express.json());
+app.use("/api", router);
 
 dns.setServers(["8.8.8.8", "1.1.1.1"])
 
