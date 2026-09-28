@@ -16,14 +16,14 @@ const paymentEvidenceSchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true
-            // Cloudinary for url too
+            // Cloudinary secure_url
         },
         filePublicId: {
             type: String,
             required: true,
             trim: true
+            // Cloudinary public_id, needed to delete/replace the asset later
         },
-            // we will use cloudinary for file//
         fileType: {
             type: String,
             enum: ["image", "pdf"],
@@ -56,7 +56,7 @@ const paymentEvidenceSchema = new mongoose.Schema(
                 validator: function (value) {
                     return this.reviewStatus !== "REJECTED" || (value && value.length > 0);
                 },
-                message: "review note is required when review is rejected 'REJECTED'"
+                message: "reviewNote is required when reviewStatus is 'REJECTED'"
             }
         }
     },

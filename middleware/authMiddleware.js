@@ -1,0 +1,31 @@
+import jwt from "jsonwebtoken";
+import User from "../models/usersModel.js";
+
+// Verifies the access token on protected routes, attaches req.user
+export const protect = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "Not authorized, no token provided." });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+
+        const user = await User.findById(decoded.userId).select("-passwordHash");
+        if (!user) {
+            return res.status(401).json({ message: "Not authorized, user no longer exists." });
+        }
+
+        req.user = user;
+        next();
+    } catch (err) {
+        // Distinguish expired vs invalid so mobile knows whether to try /auth/refresh
+        if (err.name === "TokenExpiredError") {
+            return res.status(401).json({ message: "Access token expired.", code: "TOKEN_EXPIRED" });
+        }
+        return res.status(401).json({ message: "Not authorized, invalid token." });
+    }
+};
