@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import User from "../models/usersModel.js";
+import User from "../models/userModel.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/generateTokens.js";
 
 const SALT_ROUNDS = 10;

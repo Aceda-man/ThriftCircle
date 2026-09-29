@@ -1,0 +1,101 @@
+import streamifier from "streamifier";
+import cloudinary from "../config/cloudinaryConfig.js";
+import Contribution from "../models/contributionModel.js";
+import PaymentEvidence from "../models/paymentEvidenceModel.js";
+import { createNotification } from "./notificationController.js";
+import { checkAndCloseCycle } from "./cycleController.js";
+
+// POST /contributions/:contributionId/evidence
+export const submitPaymentEvidence = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: "A file is required." });
+        }
+
+        const contribution = await Contribution.findById(req.params.contributionId);
+        if (!contribution) {
+            return res.status(404).json({ message: "Contribution not found." });
+        }
+
+        if (!contribution.memberId.equals(req.user._id)) {
+            return res.status(403).json({ message: "You can only submit evidence for your own contribution." });
+        }
+
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder: "payment_evidence", resource_type: "auto" },
+                (error, result) => (error ? reject(error) : resolve(result))
+            );
+            streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+
+        const evidence = await PaymentEvidence.create({
+            contributionId: contribution._id,
+            submittedBy: req.user._id,
+            fileUrl: uploadResult.secure_url,
+            filePublicId: uploadResult.public_id,
+            fileType: req.file.mimetype === "application/pdf" ? "pdf" : "image",
+            note: req.body.note || null
+        });
+
+        contribution.status = "PENDING_REVIEW";
+        contribution.submittedAt = new Date();
+        await contribution.save();
+
+        res.status(201).json(evidence);
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// PATCH /evidence/:evidenceId/review — organizer approves or rejects
+export const reviewPaymentEvidence = async (req, res) => {
+    try {
+        const { decision, reviewNote } = req.body; // decision: "APPROVED" | "REJECTED"
+
+        if (!["APPROVED", "REJECTED"].includes(decision)) {
+            return res.status(400).json({ message: "decision must be APPROVED or REJECTED." });
+        }
+        if (decision === "REJECTED" && !reviewNote) {
+            return res.status(400).json({ message: "reviewNote is required when rejecting." });
+        }
+
+        const evidence = await PaymentEvidence.findById(req.params.evidenceId);
+        if (!evidence) {
+            return res.status(404).json({ message: "Evidence not found." });
+        }
+
+        const contribution = await Contribution.findById(evidence.contributionId);
+
+        evidence.reviewStatus = decision;
+        evidence.reviewedBy = req.user._id;
+        evidence.reviewedAt = new Date();
+        if (reviewNote) evidence.reviewNote = reviewNote;
+        await evidence.save();
+
+        contribution.status = decision === "APPROVED" ? "CONFIRMED" : "ISSUE";
+        if (decision === "APPROVED") contribution.confirmedAt = new Date();
+        if (decision === "REJECTED") contribution.issueReason = reviewNote;
+        await contribution.save();
+
+       await createNotification(
+    contribution.memberId,
+    decision === "APPROVED" ? "PAYMENT_CONFIRMED" : "PAYMENT_FLAGGED",
+    decision === "APPROVED" ? "Payment confirmed" : "Payment needs attention",
+    decision === "APPROVED"
+        ? "Your payment was confirmed."
+        : `Your payment was flagged: ${reviewNote}`,
+    { relatedModel: "Contribution", relatedId: contribution._id }
+);
+
+        // An approval might be the last outstanding contribution for this cycle —
+        // check whether the cycle can now close (it also needs a payout recorded).
+        if (decision === "APPROVED") {
+            await checkAndCloseCycle(contribution.groupId, contribution.cycleNumber);
+        }
+
+        res.status(200).json({ evidence, contribution });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
