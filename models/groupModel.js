@@ -12,7 +12,7 @@ const groupModelSchema = new mongoose.Schema(
             ref : "User",
             required : true
         },
-        contributionAmount : {
+        contributionAmount : { 
             type : Number,
             required : true,
             min : [0.01, "Contribution amount must be greater than zero"]
@@ -50,11 +50,11 @@ const groupModelSchema = new mongoose.Schema(
             enum : ["active", "completed"],
             default : "active"
         },
-        
-        {
-        
+    },
+    {
         timestamps : true
-    }
+    }  
+
 )
 
 const Group = mongoose.model("Group", groupModelSchema)
