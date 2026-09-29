@@ -37,7 +37,7 @@ const contributionModelSchema = new mongoose.Schema({
         type: String,
         trim: true,
         default: null,
-        //for cassees when there is an issue, tell frontend
+        //for cases when there is an issue, tell frontend
         validate: {
         validator: function (value) {
                     return this.status !== "ISSUE" || (value && value.length > 0);
