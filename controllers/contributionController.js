@@ -120,4 +120,4 @@ export const generateContributionsForGroup = async (groupId, amount, dueDate) =>
     }
 
     return results;
-};
+}; // a round of applause

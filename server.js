@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import mongoSanitize from "express-mongo-sanitize";
 import dns from "node:dns";
 import "dotenv/config";
 import connectDB from "./config/db.js";
@@ -9,13 +11,22 @@ import { startScheduler } from "./jobs/scheduler.js"
 
 const app = express();
 
+app.use(helmet());
+
 app.use(cors({
-    origin: "*"
+    origin: "*" //reminder to inrtegrate cors under.env before deployment
 }));
 
 app.use(express.json());
+// express-mongo-sanitize v2.2.0 assigns req.query directly, which Express 5
+// disallows (req.query is now a read-only getter on IncomingMessage).
+// Call sanitize() manually on the mutable properties only.
+app.use((req, res, next) => {
+    if (req.body)   req.body   = mongoSanitize.sanitize(req.body);
+    if (req.params) req.params = mongoSanitize.sanitize(req.params);
+    next();
+});
 app.use("/api", router);
-
 
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 

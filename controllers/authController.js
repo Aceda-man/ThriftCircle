@@ -5,7 +5,7 @@ import User from "../models/userModel.js";
 import { generateAccessToken, generateRefreshToken } from "../utils/generateTokens.js";
 
 const SALT_ROUNDS = 10;
-
+//tutor esther will be wowed at the amount of try and catch and if in this code lol
 // to never leak passwordHash or reset codes//
 const toPublicUser = (user) => ({
     id: user._id,
@@ -15,17 +15,28 @@ const toPublicUser = (user) => ({
     createdAt: user.createdAt
 });
 
-// Looks up a user by whichever identifier was provided — email takes priority if somehow both are sent.
+// Rejects anything that isn't a string (objects like { "$ne": null }, arrays, numbers).
+// team lead intentionally added ths line because sanitize keeps dragging in errors 
+const isInvalidOptionalString = (value) =>
+    value !== undefined && value !== null && typeof value !== "string";
+
+const hasInvalidInput = (...values) => values.some(isInvalidOptionalString);
+
+// looks up a user by whichever identifier was provided, priority is on email tho
 const findUserByEmailOrPhone = async ({ email, phoneNumber }) => {
     if (email) return User.findOne({ email: email.toLowerCase() });
     if (phoneNumber) return User.findOne({ phoneNumber });
     return null;
 };
 
-// POST /auth/signup
+// POST /auth/signup //this thing almost make me craze lmao
 export const signup = async (req, res) => {
     try {
         const { fullName, email, phoneNumber, password, confirmPassword } = req.body;
+
+        if (hasInvalidInput(fullName, email, phoneNumber, password, confirmPassword)) {
+            return res.status(400).json({ message: "Invalid input format." });
+        }
 
         if (!fullName || !email || !phoneNumber || !password || !confirmPassword) {
             return res.status(400).json({ message: "All fields are required." });
@@ -38,7 +49,9 @@ export const signup = async (req, res) => {
             });
         }
 
-        const existingEmail = await User.findOne({ email: email.toLowerCase() });
+        const normalizedEmail = email.toLowerCase();
+
+        const existingEmail = await User.findOne({ email: normalizedEmail });
         if (existingEmail) {
             return res.status(409).json({
                 message: "Email already in use.",
@@ -56,12 +69,12 @@ export const signup = async (req, res) => {
 
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-        const user = await User.create({ fullName, email, phoneNumber, passwordHash });
+        const user = await User.create({ fullName, email: normalizedEmail, phoneNumber, passwordHash });
 
         const accessToken = generateAccessToken(user._id);
         const refreshToken = generateRefreshToken(user._id);
 
-        //Store only a hash of the refresh toke//
+        //Store only a hash of the refresh toke// //learnt something new lmao
         user.refreshTokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
         await user.save();
 
@@ -75,6 +88,10 @@ export const signup = async (req, res) => {
 export const login = async (req, res) => {
     try {
         const { email, phoneNumber, password } = req.body;
+
+        if (hasInvalidInput(email, phoneNumber, password)) {
+            return res.status(400).json({ message: "Invalid input format." });
+        }
 
         if ((!email && !phoneNumber) || !password) {
             return res.status(400).json({ message: "Email or phone number, and password, are required." });
@@ -106,6 +123,11 @@ export const login = async (req, res) => {
 export const forgotPassword = async (req, res) => {
     try {
         const { email, phoneNumber } = req.body;
+
+        if (hasInvalidInput(email, phoneNumber)) {
+            return res.status(400).json({ message: "Invalid input format." });
+        }
+
         const user = await findUserByEmailOrPhone({ email, phoneNumber });
 
         // this doesn't reveal whether the account exists to prevent risks
@@ -133,6 +155,10 @@ export const forgotPassword = async (req, res) => {
 export const resetPassword = async (req, res) => {
     try {
         const { email, phoneNumber, resetCode, newPassword } = req.body;
+
+        if (hasInvalidInput(email, phoneNumber, resetCode, newPassword)) {
+            return res.status(400).json({ message: "Invalid input format." });
+        }
 
         if ((!email && !phoneNumber) || !resetCode || !newPassword) {
             return res.status(400).json({ message: "Email or phone number, resetCode, and newPassword are required." });
@@ -168,6 +194,11 @@ export const resetPassword = async (req, res) => {
 export const refresh = async (req, res) => {
     try {
         const { refreshToken } = req.body;
+
+        if (hasInvalidInput(refreshToken)) {
+            return res.status(400).json({ message: "Invalid input format." });
+        }
+
         if (!refreshToken) {
             return res.status(400).json({ message: "refreshToken is required." });
         }
@@ -206,7 +237,7 @@ export const refresh = async (req, res) => {
 export const logout = async (req, res) => {
     try {
         const { refreshToken } = req.body;
-        if (!refreshToken) {
+        if (!refreshToken || typeof refreshToken !== "string") {
             return res.status(204).send();
         }
 
@@ -221,4 +252,4 @@ export const logout = async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
-};
+};// the end 
