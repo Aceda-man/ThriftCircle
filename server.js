@@ -18,9 +18,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
-// express-mongo-sanitize v2.2.0 assigns req.query directly, which Express 5
-// disallows (req.query is now a read-only getter on IncomingMessage).
-// Call sanitize() manually on the mutable properties only.
+
 app.use((req, res, next) => {
     if (req.body)   req.body   = mongoSanitize.sanitize(req.body);
     if (req.params) req.params = mongoSanitize.sanitize(req.params);

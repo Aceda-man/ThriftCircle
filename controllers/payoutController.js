@@ -1,5 +1,6 @@
 import Payout from "../models/payoutModel.js";
 import Cycle from "../models/cycleModel.js";
+import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
 
@@ -74,6 +75,46 @@ export const listGroupPayouts = async (req, res) => {
       .populate("recipientId", "fullName");
 
     res.status(200).json(payouts);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PUT /groups/:groupId/payouts/order — organizer reorders members not yet paid.
+// Requires isGroupOrganizer to have run first.
+export const setPayoutOrder = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { order } = req.body; // array of { userId, payoutOrder }
+
+    if (!Array.isArray(order) || order.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "order must be a non-empty array of { userId, payoutOrder }." });
+    }
+
+    // Only allow reordering members who haven't already received a payout —
+    // find everyone who HAS been paid, to make sure none of them are in this request.
+    const paidCycles = await Cycle.find({ groupId, payoutId: { $ne: null } });
+    const paidUserIds = new Set(paidCycles.map((c) => c.recipientId.toString()));
+
+    for (const entry of order) {
+      if (paidUserIds.has(entry.userId)) {
+        return res
+          .status(409)
+          .json({ message: `User ${entry.userId} has already received a payout and cannot be reordered.` });
+      }
+    }
+
+    await Promise.all(
+      order.map(({ userId, payoutOrder }) =>
+        GroupMember.updateOne({ groupId, userId }, { $set: { payoutOrder } })
+      )
+    );
+
+    const updatedMembers = await GroupMember.find({ groupId, status: "active" }).sort({ payoutOrder: 1 });
+
+    res.status(200).json(updatedMembers);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -2,6 +2,7 @@ import streamifier from "streamifier";
 import cloudinary from "../config/cloudinaryConfig.js";
 import Contribution from "../models/contributionModel.js";
 import PaymentEvidence from "../models/paymentEvidenceModel.js";
+import Group from "../models/groupModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
 
@@ -19,6 +20,10 @@ export const submitPaymentEvidence = async (req, res) => {
 
         if (!contribution.memberId.equals(req.user._id)) {
             return res.status(403).json({ message: "You can only submit evidence for your own contribution." });
+        }
+
+        if (["CONFIRMED", "PENDING_REVIEW"].includes(contribution.status)) {
+            return res.status(409).json({ message: `Evidence has already been submitted (status: ${contribution.status}).` });
         }
 
         const uploadResult = await new Promise((resolve, reject) => {
@@ -41,6 +46,21 @@ export const submitPaymentEvidence = async (req, res) => {
         contribution.status = "PENDING_REVIEW";
         contribution.submittedAt = new Date();
         await contribution.save();
+
+        const group = await Group.findById(contribution.groupId);
+        if (group) {
+            try {
+                await createNotification(
+                    group.organizerId,
+                    "EVIDENCE_SUBMITTED",
+                    "Payment evidence submitted",
+                    `A member submitted payment evidence for "${group.groupName}" — awaiting your review.`,
+                    { relatedModel: "PaymentEvidence", relatedId: evidence._id }
+                );
+            } catch (err) {
+                console.error(`[evidence] Organizer notification failed (evidence ${evidence._id}):`, err);
+            }
+        }
 
         res.status(201).json(evidence);
     } catch (err) {

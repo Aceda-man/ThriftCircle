@@ -8,6 +8,7 @@ import notificationRoutes from "./notificationRoutes.js";
 import paymentEvidenceRoutes from "./paymentEvidenceRoutes.js";
 import payoutRoutes from "./payoutRoutes.js";
 import cycleRoutes from "./cycleRoutes.js";
+import dashboardRoutes from "./dashboardRoutes.js";
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.use("/groups", groupRoutes);
 router.use("/groups", contributionRoutes);
 router.use("/groups", payoutRoutes);
 router.use("/groups", cycleRoutes);
+router.use("/groups", dashboardRoutes);
 router.use("/contributions", contributionByIdRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/", paymentEvidenceRoutes);

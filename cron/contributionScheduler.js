@@ -13,9 +13,9 @@ const addInterval = (date, frequency) => {
     return next;
 };
 
-// Flips any DUE contribution whose dueDate has passed to OVERDUE, and alerts that
-// group's organizer and the member who owes it once per contribution (not repeated
-// every tick, since status only flips DUE -> OVERDUE once).
+// Flips any DUE contribution whose dueDate has passed to OVERDUE, and notifies
+// both the member who owes it and the group's organizer (unless the organizer
+// is the one who owes it, in which case only the member notification fires).
 const flagOverdueContributions = async () => {
     const overdueContributions = await Contribution.find({
         status: "DUE",
@@ -37,7 +37,7 @@ const flagOverdueContributions = async () => {
             try {
                 await createNotification(
                     contribution.memberId,
-                    "OVERDUE_MEMBER_ALERT",
+                    "CONTRIBUTION_OVERDUE",
                     "Your contribution is overdue",
                     `Your contribution of ${amount} for "${group.groupName}" is now overdue. Please pay as soon as you can.`,
                     related
@@ -70,90 +70,62 @@ const flagOverdueContributions = async () => {
     }
 };
 
-const processGroup = async (group) => {
-    const lastContribution = await Contribution.findOne({ groupId: group._id })
-        .sort({ dueDate: -1 });
+const runCycleCheck = async () => {
+    console.log("[cron] Checking groups for due contribution cycles...");
 
-    const nextDueDate = lastContribution
-        ? addInterval(lastContribution.dueDate, group.frequency)
-        : group.startDate;
+    await flagOverdueContributions();
 
-    if (nextDueDate <= new Date()) {
-        const lastCycle = await Cycle.findOne({ groupId: group._id }).sort({ cycleNumber: -1 });
-        const nextCycleNumber = lastCycle ? lastCycle.cycleNumber + 1 : 1;
+    const activeGroups = await Group.find({ status: "active" });
 
-        const recipientId = await pickCycleRecipient(group._id);
-        if (!recipientId) {
-            console.log(`[cron] Group ${group._id}: everyone has already been paid, skipping cycle creation.`);
-            return;
-        }
+    for (const group of activeGroups) {
+        const lastContribution = await Contribution.findOne({ groupId: group._id })
+            .sort({ dueDate: -1 });
 
-        try {
+        const nextDueDate = lastContribution
+            ? addInterval(lastContribution.dueDate, group.frequency)
+            : group.startDate;
+
+        if (nextDueDate <= new Date()) {
+            const lastCycle = await Cycle.findOne({ groupId: group._id }).sort({ cycleNumber: -1 });
+            const nextCycleNumber = lastCycle ? lastCycle.cycleNumber + 1 : 1;
+
+            const recipientId = await pickCycleRecipient(group._id);
+            if (!recipientId) {
+                console.log(`[cron] Group ${group._id}: everyone has already been paid, skipping cycle creation.`);
+                continue;
+            }
+
             await Cycle.create({
                 groupId: group._id,
                 cycleNumber: nextCycleNumber,
                 recipientId
             });
-        } catch (err) {
-            if (err.code === 11000) return; // cycle already exists, nothing to do
-            throw err;
-        }
 
-        const activeMembers = await GroupMember.find({ groupId: group._id, status: "active" });
-        const results = { created: 0, skipped: 0 };
+            const activeMembers = await GroupMember.find({ groupId: group._id, status: "active" });
+            const results = { created: 0, skipped: 0 };
 
-        for (const member of activeMembers) {
-            try {
-                await Contribution.create({
-                    groupId: group._id,
-                    memberId: member.userId,
-                    amount: group.contributionAmount,
-                    dueDate: nextDueDate,
-                    cycleNumber: nextCycleNumber
-                });
-                results.created++;
-            } catch (err) {
-                if (err.code === 11000) results.skipped++;
-                else throw err;
+            for (const member of activeMembers) {
+                try {
+                    await Contribution.create({
+                        groupId: group._id,
+                        memberId: member.userId,
+                        amount: group.contributionAmount,
+                        dueDate: nextDueDate,
+                        cycleNumber: nextCycleNumber
+                    });
+                    results.created++;
+                } catch (err) {
+                    if (err.code === 11000) results.skipped++;
+                    else throw err;
+                }
             }
+
+            console.log(`[cron] Group ${group._id}: cycle ${nextCycleNumber} created, recipient ${recipientId}, contributions created ${results.created}, skipped ${results.skipped}`);
         }
-
-        console.log(`[cron] Group ${group._id}: cycle ${nextCycleNumber} created, recipient ${recipientId}, contributions created ${results.created}, skipped ${results.skipped}`);
-    }
-};
-
-let isRunning = false;
-
-const runCycleCheck = async () => {
-    console.log("[cron] Checking groups for due contribution cycles...");
-
-    if (isRunning) return; // previous run still going
-    isRunning = true;
-
-    try {
-        try {
-            await flagOverdueContributions();
-        } catch (err) {
-            console.error("[cron] Overdue check failed:", err);
-        }
-
-        const activeGroups = await Group.find({ status: "active" });
-
-        for (const group of activeGroups) {
-            try {
-                await processGroup(group);
-            } catch (err) {
-                console.error(`[cron] Group ${group._id} failed:`, err);
-            }
-        }
-    } catch (err) {
-        console.error("[cron] Cycle check failed:", err);
-    } finally {
-        isRunning = false;
     }
 };
 
 export const startContributionScheduler = () => {
-    cron.schedule("* * * * *", runCycleCheck);
+    cron.schedule("* * * * *", runCycleCheck); // switch back to "0 0 * * *" once confirmed working
     console.log("[cron] Contribution scheduler started.");
 };
