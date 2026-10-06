@@ -87,6 +87,21 @@ export const reviewPaymentEvidence = async (req, res) => {
 
         const contribution = await Contribution.findById(evidence.contributionId);
 
+        // NEW block starts
+        if (!contribution) {
+            return res.status(404).json({ message: "Contribution not found." });
+        }
+
+        const group = await Group.findById(contribution.groupId);
+        if (!group || !group.organizerId.equals(req.user._id)) {
+            return res.status(403).json({ message: "Only the group organizer can review evidence." });
+        }
+
+        if (evidence.reviewStatus !== "PENDING" || contribution.status !== "PENDING_REVIEW") {
+            return res.status(409).json({ message: "This evidence is not awaiting review." });
+        }
+        // NEW block ends
+
         evidence.reviewStatus = decision;
         evidence.reviewedBy = req.user._id;
         evidence.reviewedAt = new Date();

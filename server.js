@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import multer from "multer"; 
 import mongoSanitize from "express-mongo-sanitize";
 import dns from "node:dns";
 import "dotenv/config";
@@ -35,6 +36,11 @@ connectDB().then(() => {
 
 // Global error handler 
 app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) { 
+        return res.status(400).json({        
+            message: err.code === "LIMIT_FILE_SIZE" ? "File must be 5MB or less." : err.message 
+        });                                  
+    }                                        
     console.error(err.stack);
     res.status(err.statusCode || 500).json({ message: err.message || "Something went wrong." });
 });
