@@ -3,6 +3,7 @@ import cloudinary from "../config/cloudinaryConfig.js";
 import Contribution from "../models/contributionModel.js";
 import PaymentEvidence from "../models/paymentEvidenceModel.js";
 import Group from "../models/groupModel.js";
+import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
 
@@ -68,7 +69,7 @@ export const submitPaymentEvidence = async (req, res) => {
     }
 };
 
-// PATCH /evidence/:evidenceId/review — organizer approves or rejects
+// PATCH /evidence/:evidenceId/review — any organizer of the group approves or rejects
 export const reviewPaymentEvidence = async (req, res) => {
     try {
         const { decision, reviewNote } = req.body; // decision: "APPROVED" | "REJECTED"
@@ -86,21 +87,23 @@ export const reviewPaymentEvidence = async (req, res) => {
         }
 
         const contribution = await Contribution.findById(evidence.contributionId);
-
-        // NEW block starts
         if (!contribution) {
             return res.status(404).json({ message: "Contribution not found." });
         }
 
-        const group = await Group.findById(contribution.groupId);
-        if (!group || !group.organizerId.equals(req.user._id)) {
-            return res.status(403).json({ message: "Only the group organizer can review evidence." });
+        const membership = await GroupMember.findOne({
+            userId: req.user._id,
+            groupId: contribution.groupId,
+            status: "active",
+            role: "organizer"
+        });
+        if (!membership) {
+            return res.status(403).json({ message: "Only group organizers can review evidence." });
         }
 
         if (evidence.reviewStatus !== "PENDING" || contribution.status !== "PENDING_REVIEW") {
             return res.status(409).json({ message: "This evidence is not awaiting review." });
         }
-        // NEW block ends
 
         evidence.reviewStatus = decision;
         evidence.reviewedBy = req.user._id;
@@ -113,18 +116,16 @@ export const reviewPaymentEvidence = async (req, res) => {
         if (decision === "REJECTED") contribution.issueReason = reviewNote;
         await contribution.save();
 
-       await createNotification(
-    contribution.memberId,
-    decision === "APPROVED" ? "PAYMENT_CONFIRMED" : "PAYMENT_FLAGGED",
-    decision === "APPROVED" ? "Payment confirmed" : "Payment needs attention",
-    decision === "APPROVED"
-        ? "Your payment was confirmed."
-        : `Your payment was flagged: ${reviewNote}`,
-    { relatedModel: "Contribution", relatedId: contribution._id }
-);
+        await createNotification(
+            contribution.memberId,
+            decision === "APPROVED" ? "PAYMENT_CONFIRMED" : "PAYMENT_FLAGGED",
+            decision === "APPROVED" ? "Payment confirmed" : "Payment needs attention",
+            decision === "APPROVED"
+                ? "Your payment was confirmed."
+                : `Your payment was flagged: ${reviewNote}`,
+            { relatedModel: "Contribution", relatedId: contribution._id }
+        );
 
-        // An approval might be the last outstanding contribution for this cycle —
-        // check whether the cycle can now close (it also needs a payout recorded).
         if (decision === "APPROVED") {
             await checkAndCloseCycle(contribution.groupId, contribution.cycleNumber);
         }

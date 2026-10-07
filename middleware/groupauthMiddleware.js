@@ -110,3 +110,32 @@ export const isPayoutGroupCreator = async (req, res, next) => {
         res.status(500).json({ message: err.message });
     }
 };
+
+// Caller must be an "organizer" (by role, not just the literal creator) on the group
+// that a SPECIFIC PAYOUT belongs to. Use for: /payouts/:payoutId/approve — groupId
+// isn't in the URL/body, so it's derived from the payout record itself.
+export const isPayoutGroupOrganizer = async (req, res, next) => {
+    try {
+        const payout = await Payout.findById(req.params.payoutId);
+        if (!payout) {
+            return res.status(404).json({ message: "Payout not found." });
+        }
+
+        const membership = await GroupMember.findOne({
+            userId: req.user._id,
+            groupId: payout.groupId,
+            status: "active",
+            role: "organizer"
+        });
+
+        if (!membership) {
+            return res.status(403).json({ message: "Only group organizers can perform this action." });
+        }
+
+        req.payout = payout;
+        req.membership = membership;
+        next();
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
