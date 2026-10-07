@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 export const notificationType = [
     "GROUP_INVITE",
+    "GROUP_JOIN_REQUEST", // NEW — organizer notified when someone requests to join
     "CYCLE_ACTIVATED",
     "CONTRIBUTION_DUE_SOON",
     "CONTRIBUTION_OVERDUE",

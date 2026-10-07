@@ -10,6 +10,7 @@ import GroupMember from "../models/groupMemberModel.js";
 export const checkAndCloseCycle = async (groupId, cycleNumber) => {
     const cycle = await Cycle.findOne({ groupId, cycleNumber });
     if (!cycle || cycle.status === "COMPLETED") return null;
+    if (cycle.status !== "PAYOUT_PHASE") return cycle; // not in payout phase yet
     if (!cycle.payoutId) return cycle; // payout not recorded yet — not ready
 
     const activeMemberCount = await GroupMember.countDocuments({ groupId, status: "active" });
@@ -32,8 +33,10 @@ export const checkAndCloseCycle = async (groupId, cycleNumber) => {
 // GET /groups/:groupId/cycles/current
 export const getCurrentCycle = async (req, res) => {
     try {
-        const cycle = await Cycle.findOne({ groupId: req.params.groupId, status: "ACTIVE" })
-            .sort({ cycleNumber: -1 });
+        const cycle = await Cycle.findOne({
+            groupId: req.params.groupId,
+            status: { $in: ["ACTIVE", "PAYOUT_PHASE"] }
+        }).sort({ cycleNumber: -1 });
 
         if (!cycle) {
             return res.status(404).json({ message: "No active cycle for this group." });

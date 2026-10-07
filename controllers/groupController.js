@@ -3,6 +3,7 @@ import Group from "../models/groupModel.js";
 import GroupMember from "../models/groupMemberModel.js";
 import Cycle from "../models/cycleModel.js";
 import Contribution from "../models/contributionModel.js";
+import { createNotification } from "./notificationController.js";
 
 const generateInviteCode = () => crypto.randomBytes(3).toString("hex").toUpperCase();
 
@@ -41,7 +42,8 @@ export const createGroup = async (req, res) => {
     }
 };
 
-// POST /groups/join — a user joins a group via invite code
+// POST /groups/join — a user requests to join a group via invite code.
+// Creates a PENDING membership — not active until the organizer approves it.
 export const joinGroup = async (req, res) => {
     try {
         const { inviteCode } = req.body;
@@ -60,43 +62,85 @@ export const joinGroup = async (req, res) => {
             userId: req.user._id
         });
         if (existingMembership) {
-            return res.status(409).json({ message: "You are already a member of this group." });
+            return res.status(409).json({
+                message: existingMembership.status === "pending"
+                    ? "Your request to join is already pending approval."
+                    : "You are already a member of this group."
+            });
         }
-
-        const memberCount = await GroupMember.countDocuments({ groupId: group._id });
 
         const membership = await GroupMember.create({
             userId: req.user._id,
             groupId: group._id,
-            joinedAt: new Date(),
-            status: "active",
+            joinedAt: null, // not set until approved
+            status: "pending",
             role: "member",
-            payoutOrder: memberCount + 1
+            payoutOrder: null // assigned on approval, not on request
         });
 
-        // Backfill: if this group already has a cycle in progress, the late joiner
-        // owes a contribution for it too — same dueDate and cycleNumber as everyone else.
-        let backfilledContribution = null;
-        const activeCycle = await Cycle.findOne({ groupId: group._id, status: "ACTIVE" });
+        try {
+            await createNotification(
+                group.organizerId,
+                "GROUP_JOIN_REQUEST",
+                "New join request",
+                `Someone requested to join "${group.groupName}" — awaiting your approval.`,
+                { relatedModel: "Group", relatedId: group._id }
+            );
+        } catch (err) {
+            console.error(`[joinGroup] Organizer notification failed (group ${group._id}):`, err);
+        }
 
-        if (activeCycle) {
-            const existingContribution = await Contribution.findOne({
-                groupId: group._id,
-                memberId: req.user._id,
+        res.status(201).json({ message: "Join request sent. Awaiting organizer approval.", membership });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// PATCH /groups/:groupId/members/:userId/approve — organizer approves a pending request.
+// Requires isGroupOrganizer to have run first.
+export const approveMember = async (req, res) => {
+    try {
+        const { groupId, userId } = req.params;
+
+        const membership = await GroupMember.findOne({ groupId, userId });
+        if (!membership) {
+            return res.status(404).json({ message: "No membership request found for this user." });
+        }
+        if (membership.status !== "pending") {
+            return res.status(409).json({ message: `This membership is not pending (status: ${membership.status}).` });
+        }
+
+        const activeCount = await GroupMember.countDocuments({ groupId, status: "active" });
+
+        membership.status = "active";
+        membership.joinedAt = new Date();
+        membership.payoutOrder = activeCount + 1;
+        await membership.save();
+
+        const group = await Group.findById(groupId);
+
+        // Backfill: if a cycle is already in progress, the newly-approved member
+        // owes a contribution for it too (same logic as before, just moved here).
+        let backfilledContribution = null;
+        const activeCycle = await Cycle.findOne({ groupId, status: "ACTIVE" });
+
+        if (activeCycle && group) {
+            const sampleContribution = await Contribution.findOne({
+                groupId,
                 cycleNumber: activeCycle.cycleNumber
             });
 
-            if (!existingContribution) {
-                // Use the dueDate from any other contribution in this cycle, so it matches exactly.
-                const sampleContribution = await Contribution.findOne({
-                    groupId: group._id,
+            if (sampleContribution) {
+                const existingContribution = await Contribution.findOne({
+                    groupId,
+                    memberId: userId,
                     cycleNumber: activeCycle.cycleNumber
                 });
 
-                if (sampleContribution) {
+                if (!existingContribution) {
                     backfilledContribution = await Contribution.create({
-                        groupId: group._id,
-                        memberId: req.user._id,
+                        groupId,
+                        memberId: userId,
                         amount: group.contributionAmount,
                         dueDate: sampleContribution.dueDate,
                         cycleNumber: activeCycle.cycleNumber
@@ -105,13 +149,48 @@ export const joinGroup = async (req, res) => {
             }
         }
 
-        res.status(201).json({ group, membership, backfilledContribution });
+        try {
+            await createNotification(
+                userId,
+                "GROUP_INVITE",
+                "Join request approved",
+                `Your request to join "${group ? group.groupName : "the group"}" was approved.`,
+                { relatedModel: "Group", relatedId: groupId }
+            );
+        } catch (err) {
+            console.error(`[approveMember] Member notification failed (group ${groupId}):`, err);
+        }
+
+        res.status(200).json({ membership, backfilledContribution });
     } catch (err) {
         res.status(500).json({ message: err.message });
     }
 };
 
-// GET /groups/mine — groups the caller belongs to, with their role in each
+// PATCH /groups/:groupId/members/:userId/reject — organizer rejects a pending request.
+// Requires isGroupOrganizer to have run first.
+export const rejectMember = async (req, res) => {
+    try {
+        const { groupId, userId } = req.params;
+
+        const membership = await GroupMember.findOne({ groupId, userId });
+        if (!membership) {
+            return res.status(404).json({ message: "No membership request found for this user." });
+        }
+        if (membership.status !== "pending") {
+            return res.status(409).json({ message: `This membership is not pending (status: ${membership.status}).` });
+        }
+
+        membership.status = "removed";
+        await membership.save();
+
+        res.status(200).json({ message: "Join request rejected." });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// GET /groups/mine — groups the caller belongs to (active memberships only), with their role in each
 export const getMyGroups = async (req, res) => {
     try {
         const memberships = await GroupMember.find({
@@ -150,6 +229,21 @@ export const getGroupDetails = async (req, res) => {
             members,
             callerRole: req.membership.role
         });
+    } catch (err) {
+        res.status(500).json({ message: err.message });
+    }
+};
+
+// GET /groups/:groupId/pending — organizer views pending join requests.
+// Requires isGroupOrganizer to have run first.
+export const getPendingMembers = async (req, res) => {
+    try {
+        const { groupId } = req.params;
+
+        const pending = await GroupMember.find({ groupId, status: "pending" })
+            .populate("userId", "fullName email phoneNumber");
+
+        res.status(200).json(pending);
     } catch (err) {
         res.status(500).json({ message: err.message });
     }

@@ -54,6 +54,9 @@ export const recordPayout = async (req, res) => {
       status: "pending_approval"
     });
 
+    cycle.status = "PAYOUT_PHASE";
+    await cycle.save();
+
     res.status(201).json(payout);
   } catch (err) {
     res.status(500).json({ message: err.message });

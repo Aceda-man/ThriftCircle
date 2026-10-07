@@ -29,10 +29,11 @@ const groupMemberSchema = new mongoose.Schema(
     // Position in the payout rotation, assigned in join order (1, 2, 3...).
     // Used to work out whose turn it is each cycle — see cron/contributionScheduler.js.
     payoutOrder: {
-      type: Number,
-      required: true,
-      min: 1,
-    },
+    type: Number,
+    required: false,
+    min: 1,
+    default: null
+},
   },
   {
     timestamps: true,

@@ -16,7 +16,7 @@ export const getOrganizerDashboard = async (req, res) => {
             issueCount
         ] = await Promise.all([
             GroupMember.countDocuments({ groupId, status: "active" }),
-            Cycle.findOne({ groupId, status: "ACTIVE" }),
+            Cycle.findOne({ groupId, status: { $in: ["ACTIVE", "PAYOUT_PHASE"] } }),
             Contribution.countDocuments({ groupId, status: "CONFIRMED" }),
             Contribution.countDocuments({ groupId, status: { $in: ["DUE", "OVERDUE"] } }),
             Contribution.countDocuments({ groupId, status: "PENDING_REVIEW" }),
@@ -32,6 +32,7 @@ export const getOrganizerDashboard = async (req, res) => {
             });
             cycleSummary = {
                 cycleNumber: activeCycle.cycleNumber,
+                cycleStatus: activeCycle.status,
                 recipientId: activeCycle.recipientId,
                 confirmed: cycleConfirmed,
                 total: memberCount
@@ -69,7 +70,7 @@ export const getMemberDashboard = async (req, res) => {
             GroupMember.findOne({ groupId, userId })
         ]);
 
-        const activeCycle = await Cycle.findOne({ groupId, status: "ACTIVE" });
+        const activeCycle = await Cycle.findOne({ groupId, status: { $in: ["ACTIVE", "PAYOUT_PHASE"] } });
         const cycleTotalConfirmed = activeCycle
             ? await Contribution.countDocuments({ groupId, cycleNumber: activeCycle.cycleNumber, status: "CONFIRMED" })
             : null;
@@ -84,7 +85,12 @@ export const getMemberDashboard = async (req, res) => {
             payoutOrder: membership ? membership.payoutOrder : null,
             isNextRecipient: activeCycle ? activeCycle.recipientId.equals(userId) : false,
             cycleProgress: activeCycle
-                ? { cycleNumber: activeCycle.cycleNumber, confirmed: cycleTotalConfirmed, total: cycleTotalMembers }
+                ? {
+                    cycleNumber: activeCycle.cycleNumber,
+                    cycleStatus: activeCycle.status,
+                    confirmed: cycleTotalConfirmed,
+                    total: cycleTotalMembers
+                  }
                 : null
         });
     } catch (err) {
@@ -119,7 +125,7 @@ export const getGroupProgress = async (req, res) => {
     try {
         const { groupId } = req.params;
 
-        const activeCycle = await Cycle.findOne({ groupId, status: "ACTIVE" });
+        const activeCycle = await Cycle.findOne({ groupId, status: { $in: ["ACTIVE", "PAYOUT_PHASE"] } });
         if (!activeCycle) {
             return res.status(200).json({ message: "No active cycle.", confirmed: 0, total: 0 });
         }
@@ -131,6 +137,7 @@ export const getGroupProgress = async (req, res) => {
 
         res.status(200).json({
             cycleNumber: activeCycle.cycleNumber,
+            cycleStatus: activeCycle.status,
             confirmed,
             total,
             summary: `${confirmed} of ${total} contributions confirmed`
