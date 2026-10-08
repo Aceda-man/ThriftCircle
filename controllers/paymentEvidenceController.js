@@ -2,10 +2,13 @@ import streamifier from "streamifier";
 import cloudinary from "../config/cloudinaryConfig.js";
 import Contribution from "../models/contributionModel.js";
 import PaymentEvidence from "../models/paymentEvidenceModel.js";
+import PaymentIssue from "../models/paymentIssueModel.js";
 import Group from "../models/groupModel.js";
 import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
+
+const OPEN_ISSUE_STATUSES = ["REPORTED", "UNDER_REVIEW", "CORRECTION_REQUIRED"];
 
 // POST /contributions/:contributionId/evidence
 export const submitPaymentEvidence = async (req, res) => {
@@ -43,6 +46,18 @@ export const submitPaymentEvidence = async (req, res) => {
             fileType: req.file.mimetype === "application/pdf" ? "pdf" : "image",
             note: req.body.note || null
         });
+
+        // Any older evidence still waiting for review is replaced by this resubmission.
+        await PaymentEvidence.updateMany(
+            { contributionId: contribution._id, reviewStatus: "PENDING", _id: { $ne: evidence._id } },
+            { $set: { reviewStatus: "REJECTED", reviewNote: "Superseded by a resubmission." } }
+        );
+
+        // A resubmission puts any open issue back in front of the organizer.
+        await PaymentIssue.updateMany(
+            { contributionId: contribution._id, status: { $in: OPEN_ISSUE_STATUSES } },
+            { $set: { status: "UNDER_REVIEW" } }
+        );
 
         contribution.status = "PENDING_REVIEW";
         contribution.submittedAt = new Date();
@@ -115,6 +130,35 @@ export const reviewPaymentEvidence = async (req, res) => {
         if (decision === "APPROVED") contribution.confirmedAt = new Date();
         if (decision === "REJECTED") contribution.issueReason = reviewNote;
         await contribution.save();
+
+        if (decision === "REJECTED") {
+            // Reuse the open issue if there is one; otherwise open a new, trackable one.
+            const openIssue = await PaymentIssue.findOne({
+                contributionId: contribution._id,
+                status: { $in: OPEN_ISSUE_STATUSES }
+            });
+
+            if (openIssue) {
+                openIssue.status = "CORRECTION_REQUIRED";
+                openIssue.resolutionNote = reviewNote;
+                await openIssue.save();
+            } else {
+                await PaymentIssue.create({
+                    contributionId: contribution._id,
+                    raisedBy: req.user._id,
+                    description: reviewNote,
+                    status: "CORRECTION_REQUIRED"
+                });
+            }
+        }
+
+        if (decision === "APPROVED") {
+            // An approved resubmission is what resolves an issue.
+            await PaymentIssue.updateMany(
+                { contributionId: contribution._id, status: { $in: OPEN_ISSUE_STATUSES } },
+                { $set: { status: "RESOLVED", resolutionNote: "Resolved by approved resubmission." } }
+            );
+        }
 
         await createNotification(
             contribution.memberId,
