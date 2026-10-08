@@ -6,6 +6,7 @@ import Group from "../models/groupModel.js";
 import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
+import PaymentIssue from "../models/paymentIssueModel.js";
 
 // POST /contributions/:contributionId/evidence
 export const submitPaymentEvidence = async (req, res) => {
@@ -113,8 +114,19 @@ export const reviewPaymentEvidence = async (req, res) => {
 
         contribution.status = decision === "APPROVED" ? "CONFIRMED" : "ISSUE";
         if (decision === "APPROVED") contribution.confirmedAt = new Date();
-        if (decision === "REJECTED") contribution.issueReason = reviewNote;
-        await contribution.save();
+        if (decision === "REJECTED") {
+             contribution.issueReason = reviewNote;
+    
+    // Create the formal, trackable issue row right here automatically
+    await PaymentIssue.create({
+        contributionId: contribution._id,
+        raisedBy: req.user._id, // The organizer who is rejecting it
+        description: reviewNote,
+        status: "REPORTED"
+    });
+}
+await contribution.save();
+
 
         await createNotification(
             contribution.memberId,
