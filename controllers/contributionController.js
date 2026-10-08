@@ -1,6 +1,7 @@
 import Contribution from "../models/contributionModel.js";
 import PaymentEvidence from "../models/paymentEvidenceModel.js";
 import GroupMember from "../models/groupMemberModel.js";
+import Cycle from "../models/cycleModel.js";
 
 // GET /groups/:groupId/contributions — requires isGroupMember to have run first
 export const listGroupContributions = async (req, res) => {
@@ -21,7 +22,6 @@ export const listGroupContributions = async (req, res) => {
             if (memberId) {
                 filter.memberId = memberId;
             }
-            // no memberId → organizer sees the whole group's contributions
         } else {
             filter.memberId = req.user._id;
         }
@@ -51,11 +51,12 @@ export const getContributionById = async (req, res) => {
     }
 };
 
-// POST /groups/:groupId/contributions — organizer-only, creates a single DUE contribution for one member
+// POST /groups/:groupId/contributions — organizer-only, creates a single DUE contribution for one member.
+// cycleNumber is optional: if omitted, the group's current cycle is used.
 export const createContribution = async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { memberId, amount, dueDate } = req.body;
+        const { memberId, amount, dueDate, cycleNumber } = req.body;
 
         if (!memberId || amount === undefined || !dueDate) {
             return res.status(400).json({ message: "memberId, amount, and dueDate are required." });
@@ -82,7 +83,36 @@ export const createContribution = async (req, res) => {
             return res.status(404).json({ message: "That user is not an active member of this group." });
         }
 
-        const contribution = await Contribution.create({ groupId, memberId, amount, dueDate });
+        // Every contribution belongs to a cycle.
+        let cycle;
+        if (cycleNumber !== undefined) {
+            cycle = await Cycle.findOne({ groupId, cycleNumber });
+            if (!cycle) {
+                return res.status(404).json({ message: "No such cycle for this group." });
+            }
+        } else {
+            cycle = await Cycle.findOne({
+                groupId,
+                status: { $in: ["ACTIVE", "PAYOUT_PHASE"] }
+            }).sort({ cycleNumber: -1 });
+            if (!cycle) {
+                return res.status(409).json({
+                    message: "This group has no current cycle yet. A cycle is created automatically when the first due date arrives, or pass an existing cycleNumber."
+                });
+            }
+        }
+
+        if (cycle.status === "COMPLETED") {
+            return res.status(409).json({ message: "That cycle is already completed." });
+        }
+
+        const contribution = await Contribution.create({
+            groupId,
+            memberId,
+            amount,
+            dueDate,
+            cycleNumber: cycle.cycleNumber
+        });
 
         res.status(201).json(contribution);
     } catch (err) {
@@ -93,10 +123,9 @@ export const createContribution = async (req, res) => {
     }
 };
 
-
-// Creates a DUE contribution for every active member of a group, for a given dueDate.
-// Skips members who already have one for that date (relies on the unique index).
-export const generateContributionsForGroup = async (groupId, amount, dueDate) => {
+// Internal helper — not an HTTP route handler. Cron currently inlines this logic,
+// so nothing depends on it; kept up to date so it can't break if reused.
+export const generateContributionsForGroup = async (groupId, amount, dueDate, cycleNumber) => {
     const activeMembers = await GroupMember.find({ groupId, status: "active" });
 
     const results = { created: 0, skipped: 0 };
@@ -107,17 +136,18 @@ export const generateContributionsForGroup = async (groupId, amount, dueDate) =>
                 groupId,
                 memberId: member.userId,
                 amount,
-                dueDate
+                dueDate,
+                cycleNumber
             });
             results.created++;
         } catch (err) {
             if (err.code === 11000) {
-                results.skipped++; // already exists for this member+date, fine
+                results.skipped++;
             } else {
-                throw err; // real error, let it bubble up
+                throw err;
             }
         }
     }
 
     return results;
-}; // a round of applause
+};

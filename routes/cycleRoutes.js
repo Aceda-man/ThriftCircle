@@ -5,7 +5,7 @@ import { getCurrentCycle } from "../controllers/cycleController.js";
 
 const router = express.Router();
 
-// GET /groups/:groupId/cycles/current
+// Mounted under /groups in routes/index.js → GET /groups/:groupId/cycles/current
 router.get("/:groupId/cycles/current", protect, isGroupMember, getCurrentCycle);
 
 export default router;
