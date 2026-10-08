@@ -1,15 +1,19 @@
 import PaymentIssue from "../models/paymentIssueModel.js";
 import Contribution from "../models/contributionModel.js";
+import Group from "../models/groupModel.js";
 import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 
-// 1. Members or Organizers can report a payment issue
+const OPEN_STATUSES = ["REPORTED", "UNDER_REVIEW", "CORRECTION_REQUIRED"];
+
+// POST /issues/report — the contribution's owner or a group organizer reports an issue.
+// Requires protect to have run first.
 export const reportIssue = async (req, res) => {
   try {
     const { contributionId, description } = req.body;
 
     if (!contributionId || !description || description.trim() === "") {
-      return res.status(400).json({ message: "Contribution ID and description are required." });
+      return res.status(400).json({ message: "contributionId and description are required." });
     }
 
     const contribution = await Contribution.findById(contributionId);
@@ -17,7 +21,6 @@ export const reportIssue = async (req, res) => {
       return res.status(404).json({ message: "Contribution not found." });
     }
 
-    // Auth check: User must own the contribution OR be an active group organizer
     const isOwner = contribution.memberId.equals(req.user._id);
     let isOrganizer = false;
 
@@ -35,6 +38,20 @@ export const reportIssue = async (req, res) => {
       return res.status(403).json({ message: "You are not authorized to report an issue for this contribution." });
     }
 
+    if (contribution.status !== "PENDING_REVIEW") {
+      return res.status(409).json({
+        message: `An issue can only be reported on a contribution awaiting review (status: ${contribution.status}).`,
+      });
+    }
+
+    const existingOpenIssue = await PaymentIssue.findOne({
+      contributionId,
+      status: { $in: OPEN_STATUSES },
+    });
+    if (existingOpenIssue) {
+      return res.status(409).json({ message: "There is already an open issue for this contribution." });
+    }
+
     const newIssue = await PaymentIssue.create({
       contributionId,
       raisedBy: req.user._id,
@@ -46,14 +63,19 @@ export const reportIssue = async (req, res) => {
     contribution.issueReason = description.trim();
     await contribution.save();
 
-    // Reuses your team lead's native PAYMENT_FLAGGED notification configuration
-    await createNotification(
-      contribution.memberId,
-      "PAYMENT_FLAGGED",
-      "Issue reported on payment",
-      `A payment issue has been reported: ${description.trim()}`,
-      { relatedModel: "Contribution", relatedId: contribution._id }
-    );
+    // Member reports -> tell the organizer. Organizer reports -> tell the member.
+    const group = await Group.findById(contribution.groupId);
+    const notifyUserId = isOwner ? group?.organizerId : contribution.memberId;
+
+    if (notifyUserId && !notifyUserId.equals(req.user._id)) {
+      await createNotification(
+        notifyUserId,
+        "PAYMENT_FLAGGED",
+        "Issue reported on payment",
+        `A payment issue has been reported${group ? ` in "${group.groupName}"` : ""}: ${description.trim()}`,
+        { relatedModel: "Contribution", relatedId: contribution._id }
+      );
+    }
 
     return res.status(201).json(newIssue);
   } catch (err) {
@@ -61,27 +83,17 @@ export const reportIssue = async (req, res) => {
   }
 };
 
-// 2. Organizer view to look up all issues belonging to a group
+// GET /groups/:groupId/issues — organizer view of every issue in a group.
+// Requires protect and isGroupOrganizer to have run first.
 export const listIssuesForGroup = async (req, res) => {
   try {
     const { groupId } = req.params;
 
-    // Organizer check via GroupMember lookup pattern
-    const membership = await GroupMember.findOne({
-      userId: req.user._id,
-      groupId: groupId,
-      status: "active",
-      role: "organizer",
-    });
-    if (!membership) {
-      return res.status(403).json({ message: "Only group organizers can view this issue log." });
-    }
-
     const contributions = await Contribution.find({ groupId }).select("_id");
     const contributionIds = contributions.map((c) => c._id);
 
-    const issues = await PaymentIssue.find({ contributionId: {$in: contributionIds } })
-      .populate("raisedBy", "full_name email")
+    const issues = await PaymentIssue.find({ contributionId: { $in: contributionIds } })
+      .populate("raisedBy", "fullName email")
       .sort({ createdAt: -1 });
 
     return res.status(200).json(issues);
@@ -90,19 +102,33 @@ export const listIssuesForGroup = async (req, res) => {
   }
 };
 
-// 3. Organizer marks an issue as resolved or requests a correction
+// PATCH /issues/:id/resolve — organizer moves an issue to UNDER_REVIEW or CORRECTION_REQUIRED.
+// RESOLVED is NOT set here: an issue is only resolved automatically when the member's
+// resubmitted evidence is approved (see reviewPaymentEvidence).
+// Requires protect to have run first.
 export const resolveIssue = async (req, res) => {
   try {
     const { id } = req.params;
     const { status, resolutionNote } = req.body;
 
-    if (!["RESOLVED", "CORRECTION_REQUIRED", "UNDER_REVIEW"].includes(status)) {
-      return res.status(400).json({ message: "Invalid status target specified." });
+    if (status === "RESOLVED") {
+      return res.status(400).json({
+        message: "An issue is resolved automatically when the member's resubmitted evidence is approved. Use UNDER_REVIEW or CORRECTION_REQUIRED.",
+      });
+    }
+    if (!["CORRECTION_REQUIRED", "UNDER_REVIEW"].includes(status)) {
+      return res.status(400).json({ message: "status must be UNDER_REVIEW or CORRECTION_REQUIRED." });
+    }
+    if (status === "CORRECTION_REQUIRED" && (!resolutionNote || resolutionNote.trim() === "")) {
+      return res.status(400).json({ message: "resolutionNote is required when requesting a correction." });
     }
 
     const issue = await PaymentIssue.findById(id);
     if (!issue) {
       return res.status(404).json({ message: "Payment issue record not found." });
+    }
+    if (issue.status === "RESOLVED") {
+      return res.status(409).json({ message: "This issue is already resolved." });
     }
 
     const contribution = await Contribution.findById(issue.contributionId);
@@ -110,7 +136,6 @@ export const resolveIssue = async (req, res) => {
       return res.status(404).json({ message: "Associated contribution not found." });
     }
 
-    // Organizer check via GroupMember lookup pattern
     const membership = await GroupMember.findOne({
       userId: req.user._id,
       groupId: contribution.groupId,
@@ -118,29 +143,26 @@ export const resolveIssue = async (req, res) => {
       role: "organizer",
     });
     if (!membership) {
-      return res.status(403).json({ message: "Only group organizers can resolve payment issues." });
+      return res.status(403).json({ message: "Only group organizers can update payment issues." });
     }
 
     issue.status = status;
     if (resolutionNote) issue.resolutionNote = resolutionNote.trim();
     await issue.save();
 
-    if (status === "RESOLVED") {
-      contribution.status = "CONFIRMED";
-      contribution.confirmedAt = new Date();
-    } else if (status === "CORRECTION_REQUIRED") {
-      contribution.status = "ISSUE";
-      if (resolutionNote) contribution.issueReason = resolutionNote.trim();
+    if (status === "CORRECTION_REQUIRED") {
+      contribution.issueReason = resolutionNote.trim();
+      await contribution.save();
     }
-    await contribution.save();
+    // The contribution stays ISSUE in both cases until the member resubmits.
 
     await createNotification(
       contribution.memberId,
-      status === "RESOLVED" ? "PAYMENT_CONFIRMED" : "PAYMENT_FLAGGED",
-      status === "RESOLVED" ? "Payment issue resolved" : "Correction required on payment",
-      status === "RESOLVED"
-        ? "Your payment issue was resolved and confirmed."
-        : `Your payment requires correction: ${resolutionNote || ""}`,
+      "PAYMENT_FLAGGED",
+      status === "CORRECTION_REQUIRED" ? "Correction required on payment" : "Payment issue under review",
+      status === "CORRECTION_REQUIRED"
+        ? `Please resubmit your payment evidence: ${resolutionNote.trim()}`
+        : "The organizer is reviewing the issue on your payment.",
       { relatedModel: "Contribution", relatedId: contribution._id }
     );
 
