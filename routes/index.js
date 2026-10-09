@@ -11,6 +11,7 @@ import payoutByIdRoutes from "./payoutByIdRoutes.js";
 import cycleRoutes from "./cycleRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
 import paymentIssueRoutes from "./paymentIssueRoutes.js";
+import groupRuleRoutes from "./groupRuleRoutes.js";
 
 const router = express.Router();
 
@@ -27,5 +28,6 @@ router.use("/payouts", payoutByIdRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/", paymentEvidenceRoutes);
 router.use("/", paymentIssueRoutes);
+router.use("/groups", groupRuleRoutes);
 
 export default router;
