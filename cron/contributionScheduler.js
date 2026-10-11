@@ -6,6 +6,7 @@ import GroupMember from "../models/groupMemberModel.js";
 import { pickCycleRecipient } from "../utils/pickCycleRecipient.js";
 import { createNotification } from "../controllers/notificationController.js";
 import { getRulesForGroup } from "../utils/getGroupRules.js";
+import { logAudit } from "../utils/logAudit.js";
 
 const addInterval = (date, frequency) => {
   const next = new Date(date);
@@ -42,6 +43,18 @@ const flagOverdueContributions = async () => {
 
       contribution.status = "OVERDUE";
       await contribution.save();
+
+      await logAudit({
+        groupId: contribution.groupId,
+        action: "CONTRIBUTION_MARKED_OVERDUE",
+        targetModel: "Contribution",
+        targetId: contribution._id,
+        metadata: {
+          memberId: contribution.memberId,
+          dueDate: contribution.dueDate,
+        },
+      });
+
       flagged++;
 
       const group = await Group.findById(contribution.groupId);
@@ -127,10 +140,22 @@ const runCycleCheck = async () => {
         continue;
       }
 
-      await Cycle.create({
+      const newCycle = await Cycle.create({
         groupId: group._id,
         cycleNumber: nextCycleNumber,
         recipientId,
+      });
+
+      await logAudit({
+        groupId: group._id,
+        action: "CYCLE_CREATED",
+        targetModel: "Cycle",
+        targetId: newCycle._id,
+        metadata: {
+          cycleNumber: nextCycleNumber,
+          recipientId,
+          dueDate: nextDueDate,
+        },
       });
 
       const activeMembers = await GroupMember.find({

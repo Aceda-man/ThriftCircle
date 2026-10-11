@@ -70,8 +70,10 @@ export const markAllAsRead = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
 // Internal helper — not an HTTP route handler. Called by other controllers
 // (e.g. paymentEvidenceController.js) to create a notification for a user.
+// Returns the created notification, or null if it failed.
 export const createNotification = async (
   recipientId,
   type,
@@ -80,7 +82,7 @@ export const createNotification = async (
   options = {},
 ) => {
   try {
-    await Notification.create({
+    return await Notification.create({
       recipientId,
       type,
       title,
@@ -92,5 +94,6 @@ export const createNotification = async (
     // A failed notification shouldn't crash whatever triggered it (e.g. a payment review) —
     // log it and move on rather than throwing.
     console.error("Failed to create notification:", err.message);
+    return null;
   }
 };

@@ -1,24 +1,37 @@
+import "../models/groupModel.js";
+import "../models/userModel.js";
 import Contribution from "../models/contributionModel.js";
 import GroupMember from "../models/groupMemberModel.js";
+import Notification from "../models/notificationModel.js";
 import { createNotification } from "../controllers/notificationController.js";
 import { reminderRules } from "../config/notificationRules.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Due dates are stored as midnight UTC, so all day-window maths is done in UTC.
+// Due dates are compared by UTC day, so all day-window maths is done in UTC.
 const startOfUtcDay = (date = new Date()) =>
     new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
 const formatAmount = (amount) => `₦${Number(amount).toLocaleString("en-NG")}`;
 const whenText = (days) => (days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`);
 
-// DUE → OVERDUE once the due day has fully passed with no submission
-export const flagOverdueContributions = async (todayStart) => {
-    const result = await Contribution.updateMany(
-        { status: "DUE", dueDate: { $lt: todayStart } },
-        { $set: { status: "OVERDUE" } }
-    );
-    return result.modifiedCount;
+// Sends at most one notification per recipient, type and contribution per UTC day,
+// so re-running the job (e.g. runOnce.js) or overlapping with cron doesn't duplicate.
+// Returns true only if a notification was actually created.
+const sendOncePerDay = async (todayStart, { recipientId, type, title, message, relatedId }) => {
+    const alreadySent = await Notification.exists({
+        recipientId,
+        type,
+        relatedId,
+        createdAt: { $gte: todayStart }
+    });
+    if (alreadySent) return false;
+
+    const created = await createNotification(recipientId, type, title, message, {
+        relatedModel: "Contribution",
+        relatedId
+    });
+    return Boolean(created);
 };
 
 // Member reminder: contribution coming up
@@ -36,11 +49,15 @@ export const sendUpcomingReminders = async (todayStart) => {
 
         for (const contribution of contributions) {
             const groupName = contribution.groupId?.groupName ?? "your group";
-            const title = daysBefore === 0 ? "Contribution due today" : "Contribution coming up";
-            const message = `Your ${formatAmount(contribution.amount)} contribution to ${groupName} is due ${whenText(daysBefore)}.`;
 
-            await createNotification(contribution.memberId, title, message);
-            sent++;
+            const ok = await sendOncePerDay(todayStart, {
+                recipientId: contribution.memberId,
+                type: "CONTRIBUTION_DUE_SOON",
+                title: daysBefore === 0 ? "Contribution due today" : "Contribution coming up",
+                message: `Your ${formatAmount(contribution.amount)} contribution to ${groupName} is due ${whenText(daysBefore)}.`,
+                relatedId: contribution._id
+            });
+            if (ok) sent++;
         }
     }
 
@@ -48,6 +65,7 @@ export const sendUpcomingReminders = async (todayStart) => {
 };
 
 // Member reminder: contribution overdue. On the last configured day, also alerts organizers.
+// (Flagging DUE -> OVERDUE is done by cron/contributionScheduler.js, not here.)
 export const sendOverdueReminders = async (todayStart) => {
     const reminderDays = reminderRules.overdueReminderDays;
     const lastReminderDay = Math.max(...reminderDays);
@@ -68,10 +86,15 @@ export const sendOverdueReminders = async (todayStart) => {
             if (!contribution.groupId || !contribution.memberId) continue;
 
             const groupName = contribution.groupId.groupName;
-            const memberMessage = `Your ${formatAmount(contribution.amount)} contribution to ${groupName} is ${daysLate} ${daysLate === 1 ? "day" : "days"} overdue.`;
 
-            await createNotification(contribution.memberId._id, "Contribution overdue", memberMessage);
-            sent++;
+            const memberOk = await sendOncePerDay(todayStart, {
+                recipientId: contribution.memberId._id,
+                type: "CONTRIBUTION_OVERDUE",
+                title: "Contribution overdue",
+                message: `Your ${formatAmount(contribution.amount)} contribution to ${groupName} is ${daysLate} ${daysLate === 1 ? "day" : "days"} overdue.`,
+                relatedId: contribution._id
+            });
+            if (memberOk) sent++;
 
             if (daysLate === lastReminderDay) {
                 const organizers = await GroupMember.find({
@@ -83,9 +106,14 @@ export const sendOverdueReminders = async (todayStart) => {
                 for (const organizer of organizers) {
                     if (organizer.userId.equals(contribution.memberId._id)) continue;
 
-                    const orgMessage = `${contribution.memberId.fullName} is ${daysLate} days overdue on ${formatAmount(contribution.amount)} for ${groupName}.`;
-                    await createNotification(organizer.userId, "Member still overdue", orgMessage);
-                    sent++;
+                    const orgOk = await sendOncePerDay(todayStart, {
+                        recipientId: organizer.userId,
+                        type: "OVERDUE_ORGANIZER_ALERT",
+                        title: "Member still overdue",
+                        message: `${contribution.memberId.fullName} is ${daysLate} days overdue on ${formatAmount(contribution.amount)} for ${groupName}.`,
+                        relatedId: contribution._id
+                    });
+                    if (orgOk) sent++;
                 }
             }
         }
@@ -94,17 +122,12 @@ export const sendOverdueReminders = async (todayStart) => {
     return sent;
 };
 
-// NOTE: this runs once daily via jobs/scheduler.js. There's no duplicate-guard field
-// on the notification model anymore, so this only stays duplicate-free as long as the
-// job runs once per day. Running jobs/runOnce.js manually more than once on the same
-// day WILL create duplicate notifications — fine for now, revisit if that becomes a problem.
 export const runContributionReminders = async () => {
     const todayStart = startOfUtcDay();
 
-    const flagged = await flagOverdueContributions(todayStart);
     const upcoming = await sendUpcomingReminders(todayStart);
     const overdue = await sendOverdueReminders(todayStart);
 
-    console.log(`[reminders] flagged ${flagged} as overdue; sent ${upcoming} upcoming and ${overdue} overdue notifications`);
-    return { flagged, upcoming, overdue };
+    console.log(`[reminders] sent ${upcoming} upcoming and ${overdue} overdue notifications`);
+    return { upcoming, overdue };
 };

@@ -5,6 +5,8 @@ import Cycle from "../models/cycleModel.js";
 import Contribution from "../models/contributionModel.js";
 import { createNotification } from "./notificationController.js";
 import { getRulesForGroup } from "../utils/getGroupRules.js";
+import { logAudit } from "../utils/logAudit.js";
+import { validateGroupSchedule } from "../utils/validateGroupSchedule.js";
 
 const generateInviteCode = () =>
   crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -28,6 +30,15 @@ export const createGroup = async (req, res) => {
       !contributionDeadline
     ) {
       return res.status(400).json({ message: "All fields are required." });
+    }
+
+    const scheduleError = validateGroupSchedule({
+      frequency,
+      startDate,
+      contributionDeadline,
+    });
+    if (scheduleError) {
+      return res.status(400).json({ message: scheduleError });
     }
 
     const group = await Group.create({
@@ -93,6 +104,14 @@ export const joinGroup = async (req, res) => {
       payoutOrder: null, // assigned on approval, not on request
     });
 
+    await logAudit({
+      groupId: group._id,
+      actorId: req.user._id,
+      action: "MEMBER_REQUESTED",
+      targetModel: "GroupMember",
+      targetId: membership._id,
+    });
+
     try {
       await createNotification(
         group.organizerId,
@@ -108,12 +127,10 @@ export const joinGroup = async (req, res) => {
       );
     }
 
-    res
-      .status(201)
-      .json({
-        message: "Join request sent. Awaiting organizer approval.",
-        membership,
-      });
+    res.status(201).json({
+      message: "Join request sent. Awaiting organizer approval.",
+      membership,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -132,18 +149,16 @@ export const approveMember = async (req, res) => {
         .json({ message: "No membership request found for this user." });
     }
     if (membership.status !== "pending") {
-      return res
-        .status(409)
-        .json({
-          message: `This membership is not pending (status: ${membership.status}).`,
-        });
+      return res.status(409).json({
+        message: `This membership is not pending (status: ${membership.status}).`,
+      });
     }
 
     const activeCount = await GroupMember.countDocuments({
       groupId,
       status: "active",
     });
-    
+
     const rules = await getRulesForGroup(groupId);
     if (rules.maxMembers !== null && activeCount >= rules.maxMembers) {
       return res
@@ -153,8 +168,22 @@ export const approveMember = async (req, res) => {
 
     membership.status = "active";
     membership.joinedAt = new Date();
-    membership.payoutOrder = activeCount + 1;
+
+    const highest = await GroupMember.findOne({ groupId, status: "active" })
+      .sort({ payoutOrder: -1 })
+      .select("payoutOrder");
+    membership.payoutOrder = (highest?.payoutOrder || 0) + 1;
+
     await membership.save();
+
+    await logAudit({
+      groupId,
+      actorId: req.user._id,
+      action: "MEMBER_APPROVED",
+      targetModel: "GroupMember",
+      targetId: membership._id,
+      metadata: { memberUserId: userId, payoutOrder: membership.payoutOrder },
+    });
 
     const group = await Group.findById(groupId);
 
@@ -222,15 +251,22 @@ export const rejectMember = async (req, res) => {
         .json({ message: "No membership request found for this user." });
     }
     if (membership.status !== "pending") {
-      return res
-        .status(409)
-        .json({
-          message: `This membership is not pending (status: ${membership.status}).`,
-        });
+      return res.status(409).json({
+        message: `This membership is not pending (status: ${membership.status}).`,
+      });
     }
 
     membership.status = "removed";
     await membership.save();
+
+    await logAudit({
+      groupId,
+      actorId: req.user._id,
+      action: "MEMBER_REJECTED",
+      targetModel: "GroupMember",
+      targetId: membership._id,
+      metadata: { memberUserId: userId },
+    });
 
     res.status(200).json({ message: "Join request rejected." });
   } catch (err) {

@@ -12,6 +12,7 @@ import cycleRoutes from "./cycleRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
 import paymentIssueRoutes from "./paymentIssueRoutes.js";
 import groupRuleRoutes from "./groupRuleRoutes.js";
+import auditRoutes from "./auditRoutes.js";
 
 const router = express.Router();
 
@@ -23,11 +24,12 @@ router.use("/groups", contributionRoutes);
 router.use("/groups", payoutRoutes);
 router.use("/groups", cycleRoutes);
 router.use("/groups", dashboardRoutes);
+router.use("/groups", groupRuleRoutes);
+router.use("/groups", auditRoutes);
 router.use("/contributions", contributionByIdRoutes);
 router.use("/payouts", payoutByIdRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/", paymentEvidenceRoutes);
 router.use("/", paymentIssueRoutes);
-router.use("/groups", groupRuleRoutes);
 
 export default router;

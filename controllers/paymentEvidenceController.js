@@ -8,6 +8,7 @@ import GroupMember from "../models/groupMemberModel.js";
 import { createNotification } from "./notificationController.js";
 import { checkAndCloseCycle } from "./cycleController.js";
 import { getRulesForGroup } from "../utils/getGroupRules.js";
+import { logAudit } from "../utils/logAudit.js";
 
 const OPEN_ISSUE_STATUSES = ["REPORTED", "UNDER_REVIEW", "CORRECTION_REQUIRED"];
 
@@ -24,30 +25,24 @@ export const submitPaymentEvidence = async (req, res) => {
     }
 
     if (!contribution.memberId.equals(req.user._id)) {
-      return res
-        .status(403)
-        .json({
-          message: "You can only submit evidence for your own contribution.",
-        });
+      return res.status(403).json({
+        message: "You can only submit evidence for your own contribution.",
+      });
     }
 
     if (["CONFIRMED", "PENDING_REVIEW"].includes(contribution.status)) {
-      return res
-        .status(409)
-        .json({
-          message: `Evidence has already been submitted (status: ${contribution.status}).`,
-        });
+      return res.status(409).json({
+        message: `Evidence has already been submitted (status: ${contribution.status}).`,
+      });
     }
 
     if (contribution.status === "OVERDUE") {
       const rules = await getRulesForGroup(contribution.groupId);
       if (!rules.allowLateSubmission) {
-        return res
-          .status(409)
-          .json({
-            message:
-              "This group does not accept late submissions. Please contact the organizer.",
-          });
+        return res.status(409).json({
+          message:
+            "This group does not accept late submissions. Please contact the organizer.",
+        });
       }
     }
 
@@ -95,6 +90,18 @@ export const submitPaymentEvidence = async (req, res) => {
     contribution.status = "PENDING_REVIEW";
     contribution.submittedAt = new Date();
     await contribution.save();
+
+    await logAudit({
+      groupId: contribution.groupId,
+      actorId: req.user._id,
+      action: "EVIDENCE_SUBMITTED",
+      targetModel: "PaymentEvidence",
+      targetId: evidence._id,
+      metadata: {
+        contributionId: contribution._id,
+        fileType: evidence.fileType,
+      },
+    });
 
     const group = await Group.findById(contribution.groupId);
     if (group) {
@@ -177,6 +184,21 @@ export const reviewPaymentEvidence = async (req, res) => {
     if (decision === "APPROVED") contribution.confirmedAt = new Date();
     if (decision === "REJECTED") contribution.issueReason = reviewNote;
     await contribution.save();
+
+    await logAudit({
+      groupId: contribution.groupId,
+      actorId: req.user._id,
+      action:
+        decision === "APPROVED" ? "EVIDENCE_APPROVED" : "EVIDENCE_REJECTED",
+      targetModel: "PaymentEvidence",
+      targetId: evidence._id,
+      metadata: {
+        contributionId: contribution._id,
+        memberId: contribution.memberId,
+        contributionStatus: contribution.status,
+        reviewNote: reviewNote || null,
+      },
+    });
 
     if (decision === "REJECTED") {
       // Reuse the open issue if there is one; otherwise open a new, trackable one.
