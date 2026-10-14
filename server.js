@@ -14,14 +14,10 @@ const app = express();
 
 app.use(helmet());
 
-// Open CORS Configuration: Automatically allows ANY origin making the request
+// Bypasses all origin checking arrays entirely while keeping CORS alive!
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Echoes back the requesting origin to bypass all CORS locks globally
-      callback(null, true);
-    },
-    credentials: true,
+    origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -29,13 +25,13 @@ app.use(
 
 app.use(express.json());
 
-// JSON Parsing Error Catcher: Stops malformed frontend requests from crashing the server
+// Safe parsing error catcher: intercepts bad frontend JSON before it breaks the server
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    console.error("Caught a malformed JSON payload from frontend.");
+    console.error("Intercepted malformed frontend JSON body parsing attempt.");
     return res.status(400).json({ 
       status: "error", 
-      message: "The server received an invalid JSON format from the frontend." 
+      message: "The server received invalid JSON formatting from your frontend." 
     });
   }
   next(err);
@@ -48,7 +44,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root entry point to prevent "Cannot GET /" message
+// Root entry point to confirm server health and clear the "Cannot GET /" page
 app.get("/", (req, res) => {
   res.status(200).json({ status: "success", message: "ThriftCircle API is live and healthy." });
 });
