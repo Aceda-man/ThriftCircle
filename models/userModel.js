@@ -24,6 +24,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // Chosen by the user at signup (or after). No default on purpose.
+    role: {
+      type: String,
+      enum: ["ORGANIZER", "MEMBER"],
+    },
     refreshTokenHash: {
       type: String,
       default: null,
