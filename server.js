@@ -39,6 +39,10 @@ app.use(
 );
 
 app.use(express.json());
+app.use((req, res, next) => {
+  req.body ??= {};
+  next();
+});
 
 // Friendly response for malformed JSON bodies
 app.use((err, req, res, next) => {

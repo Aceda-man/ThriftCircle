@@ -39,7 +39,7 @@ const findUserByEmailOrPhone = async ({ email, phoneNumber }) => {
 // POST /auth/signup
 export const signup = async (req, res) => {
     try {
-        const { fullName, email, phoneNumber, password, confirmPassword, role } = req.body;
+        const { fullName, email, phoneNumber, password, confirmPassword, role } = req.body ?? {};
 
         if (hasInvalidInput(fullName, email, phoneNumber, password, confirmPassword, role)) {
             return res.status(400).json({ message: "Invalid input format." });
@@ -50,7 +50,7 @@ export const signup = async (req, res) => {
             return res.status(400).json({ message: "All fields are required." });
         }
 
-        // role is optional, but if it is sent it must be valid
+        // role is optional at signup, but if it is sent it must be valid
         if (role !== undefined && role !== null && !ROLES.includes(role)) {
             return res.status(400).json({
                 message: "Role must be ORGANIZER or MEMBER.",
@@ -125,7 +125,7 @@ export const signup = async (req, res) => {
 // POST /auth/login
 export const login = async (req, res) => {
     try {
-        const { email, phoneNumber, password } = req.body;
+        const { email, phoneNumber, password } = req.body ?? {};
 
         if (hasInvalidInput(email, phoneNumber, password)) {
             return res.status(400).json({ message: "Invalid input format." });
@@ -157,10 +157,32 @@ export const login = async (req, res) => {
     }
 };
 
+// PATCH /auth/role (route must be behind `protect`)
+export const setRole = async (req, res) => {
+    try {
+        const { role } = req.body ?? {};
+
+        if (typeof role !== "string" || !ROLES.includes(role)) {
+            return res.status(400).json({ message: "Role must be ORGANIZER or MEMBER." });
+        }
+
+        if (req.user.role) {
+            return res.status(409).json({ message: "Role has already been set." });
+        }
+
+        req.user.role = role;
+        await req.user.save();
+
+        res.status(200).json({ user: toPublicUser(req.user) });
+    } catch (err) {
+        return serverError(res, err);
+    }
+};
+
 // POST /auth/forgot-password
 export const forgotPassword = async (req, res) => {
     try {
-        const { email, phoneNumber } = req.body;
+        const { email, phoneNumber } = req.body ?? {};
 
         if (hasInvalidInput(email, phoneNumber)) {
             return res.status(400).json({ message: "Invalid input format." });
@@ -192,7 +214,7 @@ export const forgotPassword = async (req, res) => {
 // POST /auth/reset-password
 export const resetPassword = async (req, res) => {
     try {
-        const { email, phoneNumber, resetCode, newPassword } = req.body;
+        const { email, phoneNumber, resetCode, newPassword } = req.body ?? {};
 
         if (hasInvalidInput(email, phoneNumber, resetCode, newPassword)) {
             return res.status(400).json({ message: "Invalid input format." });
@@ -235,7 +257,7 @@ export const resetPassword = async (req, res) => {
 // POST /auth/refresh
 export const refresh = async (req, res) => {
     try {
-        const { refreshToken } = req.body;
+        const { refreshToken } = req.body ?? {};
 
         if (hasInvalidInput(refreshToken)) {
             return res.status(400).json({ message: "Invalid input format." });
@@ -275,22 +297,21 @@ export const refresh = async (req, res) => {
     }
 };
 
-// POST /auth/logout
+// POST /auth/logout (public route, do NOT put `protect` on it)
 export const logout = async (req, res) => {
     try {
-        const { refreshToken } = req.body;
-        if (!refreshToken || typeof refreshToken !== "string") {
-            return res.status(204).send();
+        const { refreshToken } = req.body ?? {};
+
+        if (typeof refreshToken === "string" && refreshToken) {
+            try {
+                const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+                await User.findByIdAndUpdate(decoded.userId, { refreshTokenHash: null });
+            } catch (err) {
+                // Token already invalid/expired: still a successful logout for the client
+            }
         }
 
-        try {
-            const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-            await User.findByIdAndUpdate(decoded.userId, { refreshTokenHash: null });
-        } catch (err) {
-            // Token already invalid/expired: logout is still a success from the client's perspective
-        }
-
-        res.status(204).send();
+        res.status(200).json({ message: "Logged out successfully." });
     } catch (err) {
         return serverError(res, err);
     }
