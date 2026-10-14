@@ -12,13 +12,12 @@ import { startScheduler } from "./jobs/scheduler.js";
 
 const app = express();
 
-// FIX 1: Tell Express to trust the reverse proxy (Render/Cloudflare)
-// This completely stops express-rate-limit from throwing the ERR_ERL_UNEXPECTED_X_FORWARDED_FOR crash
+// 1. Proxy tracking fix for express-rate-limit
 app.set("trust proxy", 1);
 
 app.use(helmet());
 
-// Open CORS Configuration: Automatically allows ANY origin making the request
+// 2. Open CORS Configuration
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -32,7 +31,7 @@ app.use(
 
 app.use(express.json());
 
-// JSON Parsing Error Catcher: Safe fallback if the frontend transmits bad data layouts
+// 3. JSON Parsing Error Catcher
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     console.error("Caught a malformed JSON payload from frontend.");
@@ -44,29 +43,24 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Security middleware to sanitize request fields
+// 4. Security middleware to sanitize request fields
 app.use((req, res, next) => {
   if (req.body) req.body = mongoSanitize.sanitize(req.body);
   if (req.params) req.params = mongoSanitize.sanitize(req.params);
   next();
 });
 
-// Root entry point to confirm server health and clear the "Cannot GET /" page
+// 5. Root health check endpoint for Render's monitors
 app.get("/", (req, res) => {
   res.status(200).json({ status: "success", message: "ThriftCircle API is live and healthy." });
 });
 
-// Primary API Router Grouping
+// 6. Primary API Router Grouping
 app.use("/api", router);
 
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
-connectDB().then(() => {
-  startContributionScheduler();
-  startScheduler();
-});
-
-// Global error handler
+// 7. Global error handler middleware
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({
@@ -77,8 +71,20 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({ message: err.message || "Something went wrong." });
 });
 
-// FIX 2: Bind dynamically to port 10000 or Render's assigned env variable
+// 8. CRUCIAL FIX: Start the port listener immediately so Render sees your app as healthy
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`server running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", async () => {
+  console.log(`Server is listening on interface 0.0.0.0 and port ${PORT}`);
+  
+  // 9. Process database connectivity and schedules asynchronously without blocking bootup
+  try {
+    await connectDB();
+    console.log("Mongodb connected successfully");
+    
+    startContributionScheduler();
+    startScheduler();
+    console.log("Schedulers initialized successfully");
+  } catch (error) {
+    console.error("Asynchronous initialization failure:", error);
+  }
 });
