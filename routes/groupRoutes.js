@@ -1,6 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { isGroupMember, isGroupOrganizer } from "../middleware/groupAuthmiddleware.js";
+import { isGroupMember, isGroupOrganizer } from "../middleware/groupauthMiddleware.js";
 import {
     createGroup,
     joinGroup,
