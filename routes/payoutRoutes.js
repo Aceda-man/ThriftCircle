@@ -1,6 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { isGroupMember, isGroupOrganizer } from "../middleware/groupAuthMiddleware.js";
+import { isGroupMember, isGroupOrganizer } from "../middleware/groupauthMiddleware.js";
 import { recordPayout, listGroupPayouts, setPayoutOrder } from "../controllers/payoutController.js";
 
 const router = express.Router();
