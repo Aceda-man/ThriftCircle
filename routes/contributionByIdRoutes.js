@@ -1,6 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { canAccessContribution } from "../middleware/contributionAuthmiddleware.js";
+import { canAccessContribution } from "../middleware/contributionAuthMiddleware.js";
 import { getContributionById } from "../controllers/contributionController.js";
 
 const router = express.Router();
