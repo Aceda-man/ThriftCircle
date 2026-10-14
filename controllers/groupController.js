@@ -20,16 +20,35 @@ export const createGroup = async (req, res) => {
       frequency,
       startDate,
       contributionDeadline,
-    } = req.body;
+    } = req.body ?? {};
 
-    if (
-      !groupName ||
-      !contributionAmount ||
-      !frequency ||
-      !startDate ||
-      !contributionDeadline
-    ) {
-      return res.status(400).json({ message: "All fields are required." });
+    // Tell the client exactly which fields are missing
+    const missing = Object.entries({
+      groupName,
+      contributionAmount,
+      frequency,
+      startDate,
+      contributionDeadline,
+    })
+      .filter(([, v]) => v === undefined || v === null || v === "")
+      .map(([k]) => k);
+
+    if (missing.length) {
+      return res.status(400).json({
+        message: `Missing required fields: ${missing.join(", ")}.`,
+        missing,
+      });
+    }
+
+    if (typeof groupName !== "string") {
+      return res.status(400).json({ message: "groupName must be text." });
+    }
+
+    const amount = Number(contributionAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res
+        .status(400)
+        .json({ message: "contributionAmount must be a number greater than 0." });
     }
 
     const scheduleError = validateGroupSchedule({
@@ -44,7 +63,7 @@ export const createGroup = async (req, res) => {
     const group = await Group.create({
       groupName,
       organizerId: req.user._id,
-      contributionAmount,
+      contributionAmount: amount,
       frequency,
       startDate,
       contributionDeadline,
@@ -71,7 +90,7 @@ export const createGroup = async (req, res) => {
 // Creates a PENDING membership — not active until the organizer approves it.
 export const joinGroup = async (req, res) => {
   try {
-    const { inviteCode } = req.body;
+    const { inviteCode } = req.body ?? {};
 
     if (!inviteCode) {
       return res.status(400).json({ message: "inviteCode is required." });
