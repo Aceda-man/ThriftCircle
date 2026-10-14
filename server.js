@@ -12,10 +12,13 @@ import { startScheduler } from "./jobs/scheduler.js";
 
 const app = express();
 
+// FIX 1: Tell Express to trust the reverse proxy (Render/Cloudflare)
+// This completely stops express-rate-limit from throwing the ERR_ERL_UNEXPECTED_X_FORWARDED_FOR crash
+app.set("trust proxy", 1);
+
 app.use(helmet());
 
 // Open CORS Configuration: Automatically allows ANY origin making the request
-// This bypasses strict env-string checks while fully supporting credentials/cookies
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -74,8 +77,8 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({ message: err.message || "Something went wrong." });
 });
 
-// FIX: Bind to 0.0.0.0 and dynamically accept Render's assigned port variable
+// FIX 2: Bind dynamically to port 10000 or Render's assigned env variable
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server is listening on interface 0.0.0.0 and port ${PORT}`);
+  console.log(`server running on port ${PORT}`);
 });
