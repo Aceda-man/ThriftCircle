@@ -11,16 +11,57 @@ import { validateGroupSchedule } from "../utils/validateGroupSchedule.js";
 const generateInviteCode = () =>
   crypto.randomBytes(3).toString("hex").toUpperCase();
 
+// Turns database errors into clear 400s instead of a vague 500.
+const sendError = (res, err) => {
+  if (err.name === "ValidationError") {
+    const errors = Object.values(err.errors).map((e) => ({
+      field: e.path,
+      message: e.message,
+    }));
+    return res.status(400).json({
+      message: errors.map((e) => e.message).join(" "),
+      errors,
+    });
+  }
+  if (err.name === "CastError") {
+    return res.status(400).json({ message: `Invalid value for ${err.path}.` });
+  }
+  return res.status(500).json({ message: err.message });
+};
+
+// Accepts 5000, "5000", "5,000" or "₦5,000".
+const parseAmount = (value) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return Number(value.replace(/[₦,\s]/g, ""));
+  return NaN;
+};
+
+// Retries with a new invite code in the rare case two groups get the same one.
+const createGroupWithUniqueCode = async (data) => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await Group.create({ ...data, inviteCode: generateInviteCode() });
+    } catch (err) {
+      const isCodeClash =
+        err.code === 11000 && err.keyPattern && err.keyPattern.inviteCode;
+      if (!isCodeClash) throw err;
+    }
+  }
+  throw new Error("Could not generate a unique invite code. Please try again.");
+};
+
 // POST /groups — organizer creates a new group
 export const createGroup = async (req, res) => {
   try {
-    const {
-      groupName,
-      contributionAmount,
-      frequency,
-      startDate,
-      contributionDeadline,
-    } = req.body ?? {};
+    const raw = req.body ?? {};
+
+    const groupName =
+      typeof raw.groupName === "string" ? raw.groupName.trim() : raw.groupName;
+    const frequency =
+      typeof raw.frequency === "string"
+        ? raw.frequency.trim().toLowerCase()
+        : raw.frequency;
+    const { contributionAmount, startDate, contributionDeadline } = raw;
 
     // Tell the client exactly which fields are missing
     const missing = Object.entries({
@@ -44,11 +85,11 @@ export const createGroup = async (req, res) => {
       return res.status(400).json({ message: "groupName must be text." });
     }
 
-    const amount = Number(contributionAmount);
+    const amount = parseAmount(contributionAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      return res
-        .status(400)
-        .json({ message: "contributionAmount must be a number greater than 0." });
+      return res.status(400).json({
+        message: "contributionAmount must be a number greater than 0.",
+      });
     }
 
     const scheduleError = validateGroupSchedule({
@@ -60,29 +101,43 @@ export const createGroup = async (req, res) => {
       return res.status(400).json({ message: scheduleError });
     }
 
-    const group = await Group.create({
+    const group = await createGroupWithUniqueCode({
       groupName,
       organizerId: req.user._id,
       contributionAmount: amount,
       frequency,
       startDate,
       contributionDeadline,
-      inviteCode: generateInviteCode(),
       status: "active",
     });
 
-    await GroupMember.create({
-      userId: req.user._id,
+    try {
+      await GroupMember.create({
+        userId: req.user._id,
+        groupId: group._id,
+        joinedAt: new Date(),
+        status: "active",
+        role: "organizer",
+        payoutOrder: 1,
+      });
+    } catch (err) {
+      // Don't leave a group with no organizer behind.
+      await Group.deleteOne({ _id: group._id });
+      throw err;
+    }
+
+    await logAudit({
       groupId: group._id,
-      joinedAt: new Date(),
-      status: "active",
-      role: "organizer",
-      payoutOrder: 1,
+      actorId: req.user._id,
+      action: "GROUP_CREATED",
+      targetModel: "Group",
+      targetId: group._id,
+      metadata: { groupName, contributionAmount: amount, frequency },
     });
 
     res.status(201).json(group);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -90,7 +145,11 @@ export const createGroup = async (req, res) => {
 // Creates a PENDING membership — not active until the organizer approves it.
 export const joinGroup = async (req, res) => {
   try {
-    const { inviteCode } = req.body ?? {};
+    const raw = req.body ?? {};
+    const inviteCode =
+      typeof raw.inviteCode === "string"
+        ? raw.inviteCode.trim().toUpperCase()
+        : "";
 
     if (!inviteCode) {
       return res.status(400).json({ message: "inviteCode is required." });
@@ -106,11 +165,14 @@ export const joinGroup = async (req, res) => {
       userId: req.user._id,
     });
     if (existingMembership) {
+      const messages = {
+        pending: "Your request to join is already pending approval.",
+        removed: "Your previous request to join this group was declined.",
+      };
       return res.status(409).json({
         message:
-          existingMembership.status === "pending"
-            ? "Your request to join is already pending approval."
-            : "You are already a member of this group.",
+          messages[existingMembership.status] ||
+          "You are already a member of this group.",
       });
     }
 
@@ -131,27 +193,20 @@ export const joinGroup = async (req, res) => {
       targetId: membership._id,
     });
 
-    try {
-      await createNotification(
-        group.organizerId,
-        "GROUP_JOIN_REQUEST",
-        "New join request",
-        `Someone requested to join "${group.groupName}" — awaiting your approval.`,
-        { relatedModel: "Group", relatedId: group._id },
-      );
-    } catch (err) {
-      console.error(
-        `[joinGroup] Organizer notification failed (group ${group._id}):`,
-        err,
-      );
-    }
+    await createNotification(
+      group.organizerId,
+      "GROUP_JOIN_REQUEST",
+      "New join request",
+      `Someone requested to join "${group.groupName}" — awaiting your approval.`,
+      { relatedModel: "Group", relatedId: group._id },
+    );
 
     res.status(201).json({
       message: "Join request sent. Awaiting organizer approval.",
       membership,
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -207,9 +262,12 @@ export const approveMember = async (req, res) => {
     const group = await Group.findById(groupId);
 
     // Backfill: if a cycle is already in progress, the newly-approved member
-    // owes a contribution for it too (same logic as before, just moved here).
+    // owes a contribution for it too. Uses the newest open cycle.
     let backfilledContribution = null;
-    const activeCycle = await Cycle.findOne({ groupId, status: "ACTIVE" });
+    const activeCycle = await Cycle.findOne({
+      groupId,
+      status: { $in: ["ACTIVE", "PAYOUT_PHASE"] },
+    }).sort({ cycleNumber: -1 });
 
     if (activeCycle && group) {
       const sampleContribution = await Contribution.findOne({
@@ -236,24 +294,17 @@ export const approveMember = async (req, res) => {
       }
     }
 
-    try {
-      await createNotification(
-        userId,
-        "GROUP_INVITE",
-        "Join request approved",
-        `Your request to join "${group ? group.groupName : "the group"}" was approved.`,
-        { relatedModel: "Group", relatedId: groupId },
-      );
-    } catch (err) {
-      console.error(
-        `[approveMember] Member notification failed (group ${groupId}):`,
-        err,
-      );
-    }
+    await createNotification(
+      userId,
+      "GROUP_INVITE",
+      "Join request approved",
+      `Your request to join "${group ? group.groupName : "the group"}" was approved.`,
+      { relatedModel: "Group", relatedId: groupId },
+    );
 
     res.status(200).json({ membership, backfilledContribution });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -287,9 +338,18 @@ export const rejectMember = async (req, res) => {
       metadata: { memberUserId: userId },
     });
 
+    const group = await Group.findById(groupId);
+    await createNotification(
+      userId,
+      "JOIN_REQUEST_REJECTED",
+      "Join request declined",
+      `Your request to join "${group ? group.groupName : "the group"}" was declined.`,
+      { relatedModel: "Group", relatedId: groupId },
+    );
+
     res.status(200).json({ message: "Join request rejected." });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -301,15 +361,17 @@ export const getMyGroups = async (req, res) => {
       status: "active",
     }).populate("groupId");
 
-    const groups = memberships.map((m) => ({
-      ...m.groupId.toObject(),
-      role: m.role,
-      joinedAt: m.joinedAt,
-    }));
+    const groups = memberships
+      .filter((m) => m.groupId) // skip memberships whose group no longer exists
+      .map((m) => ({
+        ...m.groupId.toObject(),
+        role: m.role,
+        joinedAt: m.joinedAt,
+      }));
 
     res.status(200).json(groups);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -333,7 +395,7 @@ export const getGroupDetails = async (req, res) => {
       callerRole: req.membership.role,
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
 
@@ -350,6 +412,6 @@ export const getPendingMembers = async (req, res) => {
 
     res.status(200).json(pending);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err);
   }
 };
