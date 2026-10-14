@@ -14,16 +14,15 @@ const app = express();
 
 app.use(helmet());
 
-// Replace the CORS configuration in your server.js with this:
-
+// Dynamic CORS verification using environment arrays
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",")
-  : ["http://localhost:3000"]; // Fallback if the env variable is missing locally
+  : ["http://localhost:3000"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like Postman or server-to-server requests)
+      // Allow requests with no origin (e.g., Postman, mobile apps, or backend utilities)
       if (!origin) return callback(null, true);
       
       if (allowedOrigins.includes(origin)) {
@@ -36,15 +35,21 @@ app.use(
   })
 );
 
-
 app.use(express.json());
 
+// Security middleware to sanitize request fields
 app.use((req, res, next) => {
   if (req.body) req.body = mongoSanitize.sanitize(req.body);
   if (req.params) req.params = mongoSanitize.sanitize(req.params);
   next();
 });
 
+// Root entry point to prevent "Cannot GET /" message
+app.get("/", (req, res) => {
+  res.status(200).json({ status: "success", message: "ThriftCircle API is live and healthy." });
+});
+
+// Primary API Router Grouping
 app.use("/api", router);
 
 dns.setServers(["8.8.8.8", "1.1.1.1"]);
