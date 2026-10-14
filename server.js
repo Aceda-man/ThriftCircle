@@ -14,10 +14,14 @@ const app = express();
 
 app.use(helmet());
 
-// Bypasses all origin checking arrays entirely while keeping CORS alive!
+// Open CORS Configuration: Automatically allows ANY origin making the request
+// This bypasses strict env-string checks while fully supporting credentials/cookies
 app.use(
   cors({
-    origin: "*", 
+    origin: (origin, callback) => {
+      callback(null, true);
+    },
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -25,13 +29,13 @@ app.use(
 
 app.use(express.json());
 
-// Safe parsing error catcher: intercepts bad frontend JSON before it breaks the server
+// JSON Parsing Error Catcher: Safe fallback if the frontend transmits bad data layouts
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    console.error("Intercepted malformed frontend JSON body parsing attempt.");
+    console.error("Caught a malformed JSON payload from frontend.");
     return res.status(400).json({ 
       status: "error", 
-      message: "The server received invalid JSON formatting from your frontend." 
+      message: "The server received an invalid JSON format from the frontend." 
     });
   }
   next(err);
@@ -70,7 +74,8 @@ app.use((err, req, res, next) => {
   res.status(err.statusCode || 500).json({ message: err.message || "Something went wrong." });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`server running on port ${PORT}`);
+// FIX: Bind to 0.0.0.0 and dynamically accept Render's assigned port variable
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server is listening on interface 0.0.0.0 and port ${PORT}`);
 });
