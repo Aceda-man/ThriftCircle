@@ -14,31 +14,32 @@ const app = express();
 
 app.use(helmet());
 
-// Dynamic CORS verification using environment arrays
-const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
-
+// Open CORS Configuration: Automatically allows ANY origin making the request
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g., Postman, mobile apps, or backend utilities)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        const err = new Error("Not allowed by CORS");
-        err.statusCode = 403;
-        callback(err);
-      }
+      // Echoes back the requesting origin to bypass all CORS locks globally
+      callback(null, true);
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
+
+// JSON Parsing Error Catcher: Stops malformed frontend requests from crashing the server
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error("Caught a malformed JSON payload from frontend.");
+    return res.status(400).json({ 
+      status: "error", 
+      message: "The server received an invalid JSON format from the frontend." 
+    });
+  }
+  next(err);
+});
 
 // Security middleware to sanitize request fields
 app.use((req, res, next) => {
