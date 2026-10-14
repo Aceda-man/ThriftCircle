@@ -1,6 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { isGroupMember, isGroupOrganizer } from "../middleware/groupAuthMiddleware.js";
+import { isGroupMember, isGroupOrganizer } from "../middleware/groupauthMiddleware.js";
 import { getOrganizerDashboard, getMemberDashboard, getOutstandingContributions, getGroupProgress } from "../controllers/dashboardController.js";
 
 const router = express.Router();
