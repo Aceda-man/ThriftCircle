@@ -15,20 +15,23 @@ const app = express();
 app.use(helmet());
 
 // Dynamic CORS verification using environment arrays
-const allowedOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(",")
-  : ["http://localhost:3000"];
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g., Postman, mobile apps, or backend utilities)
       if (!origin) return callback(null, true);
-      
+
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        const err = new Error("Not allowed by CORS");
+        err.statusCode = 403;
+        callback(err);
       }
     },
     credentials: true,
