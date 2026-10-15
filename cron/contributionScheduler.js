@@ -188,6 +188,12 @@ const runCycleCheck = async () => {
 };
 
 export const startContributionScheduler = () => {
-  cron.schedule("* * * * *", runCycleCheck); // switch back to "0 0 * * *" once confirmed working
+  cron.schedule("* * * * *", async () => {
+    try {
+      await runCycleCheck();
+    } catch (err) {
+      console.error("[cron] Cycle check failed:", err);
+    }
+  }); // switch back to "0 0 * * *" once confirmed working
   console.log("[cron] Contribution scheduler started.");
 };
