@@ -10,11 +10,11 @@ import { logAudit } from "../utils/logAudit.js";
 
 const addInterval = (date, frequency) => {
   const next = new Date(date);
-  if (frequency === "weekly") next.setDate(next.getDate() + 7);
+  if (frequency === "daily") next.setDate(next.getDate() + 1);
+  else if (frequency === "weekly") next.setDate(next.getDate() + 7);
   else if (frequency === "monthly") next.setMonth(next.getMonth() + 1);
   return next;
 };
-
 // Flips any DUE contribution whose dueDate has passed to OVERDUE, and notifies
 // both the member who owes it and the group's organizer (unless the organizer
 // is the one who owes it, in which case only the member notification fires).
@@ -188,6 +188,6 @@ const runCycleCheck = async () => {
 };
 
 export const startContributionScheduler = () => {
-  cron.schedule("* * * * *", runCycleCheck); // switch back to "0 0 * * *" once confirmed working
+  cron.schedule("0 0 * * *", runCycleCheck); // switch back to "0 0 * * *" once confirmed working
   console.log("[cron] Contribution scheduler started.");
 };
