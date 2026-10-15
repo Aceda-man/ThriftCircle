@@ -36,6 +36,29 @@ const parseAmount = (value) => {
   return NaN;
 };
 
+const clean = (v) => (typeof v === "string" ? v.trim() : "");
+
+const parsePaymentDetails = (input) => {
+  const pd = input ?? {};
+  return {
+    bankName: clean(pd.bankName),
+    accountName: clean(pd.accountName),
+    accountNumber: clean(pd.accountNumber),
+    referenceNote: clean(pd.referenceNote),
+  };
+};
+
+// Returns an error message, or null if valid.
+const validatePaymentDetails = (pd) => {
+  if (!pd.bankName || !pd.accountName || !pd.accountNumber) {
+    return "Payment details need a bank name, account name and account number.";
+  }
+  if (!/^\d{10}$/.test(pd.accountNumber)) {
+    return "Account number must be 10 digits.";
+  }
+  return null;
+};
+
 // Retries with a new invite code in the rare case two groups get the same one.
 const createGroupWithUniqueCode = async (data) => {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -101,6 +124,15 @@ export const createGroup = async (req, res) => {
       return res.status(400).json({ message: scheduleError });
     }
 
+    // Payment details: optional at creation, validated if any field is given.
+    const paymentDetails = parsePaymentDetails(raw.paymentDetails);
+    if (Object.values(paymentDetails).some(Boolean)) {
+      const paymentError = validatePaymentDetails(paymentDetails);
+      if (paymentError) {
+        return res.status(400).json({ message: paymentError });
+      }
+    }
+
     const group = await createGroupWithUniqueCode({
       groupName,
       organizerId: req.user._id,
@@ -108,6 +140,7 @@ export const createGroup = async (req, res) => {
       frequency,
       startDate,
       contributionDeadline,
+      paymentDetails,
       status: "active",
     });
 
@@ -411,6 +444,69 @@ export const getPendingMembers = async (req, res) => {
     }).populate("userId", "fullName email phoneNumber");
 
     res.status(200).json(pending);
+  } catch (err) {
+    sendError(res, err);
+  }
+};
+
+// PATCH /groups/:groupId/payment-details — organizer sets or edits where members pay.
+// Requires isGroupOrganizer to have run first.
+export const updatePaymentDetails = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const paymentDetails = parsePaymentDetails(req.body);
+
+    const paymentError = validatePaymentDetails(paymentDetails);
+    if (paymentError) {
+      return res.status(400).json({ message: paymentError });
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ message: "Group not found." });
+    }
+
+    const previous = group.paymentDetails?.accountNumber || "";
+    const accountChanged =
+      !!previous && previous !== paymentDetails.accountNumber;
+
+    group.paymentDetails = paymentDetails;
+    await group.save();
+
+    await logAudit({
+      groupId,
+      actorId: req.user._id,
+      action: "PAYMENT_DETAILS_UPDATED",
+      targetModel: "Group",
+      targetId: group._id,
+      metadata: { bankName: paymentDetails.bankName, accountChanged },
+    });
+
+    // Members pay real money to this account, so tell them if it changes.
+    if (accountChanged) {
+      const members = await GroupMember.find({
+        groupId,
+        status: "active",
+        userId: { $ne: req.user._id },
+      });
+
+      await Promise.all(
+        members.map((m) =>
+          createNotification(
+            m.userId,
+            "PAYMENT_DETAILS_CHANGED",
+            "Payment details updated",
+            `The organizer changed the payment account for "${group.groupName}". Check the new details before your next payment.`,
+            { relatedModel: "Group", relatedId: group._id },
+          ),
+        ),
+      );
+    }
+
+    res.status(200).json({
+      message: "Payment details saved.",
+      paymentDetails: group.paymentDetails,
+    });
   } catch (err) {
     sendError(res, err);
   }

@@ -8,7 +8,8 @@ import {
     getMyGroups,
     approveMember,
     rejectMember,
-    getPendingMembers
+    getPendingMembers,
+    updatePaymentDetails
 } from "../controllers/groupController.js";
 
 const router = express.Router();
@@ -18,6 +19,7 @@ router.post("/join", protect, joinGroup);
 router.get("/mine", protect, getMyGroups);
 router.get("/:groupId", protect, isGroupMember, getGroupDetails);
 router.get("/:groupId/pending", protect, isGroupOrganizer, getPendingMembers);
+router.patch("/:groupId/payment-details", protect, isGroupOrganizer, updatePaymentDetails);
 router.patch("/:groupId/members/:userId/approve", protect, isGroupOrganizer, approveMember);
 router.patch("/:groupId/members/:userId/reject", protect, isGroupOrganizer, rejectMember);
 

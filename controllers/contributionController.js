@@ -3,6 +3,7 @@ import PaymentEvidence from "../models/paymentEvidenceModel.js";
 import GroupMember from "../models/groupMemberModel.js";
 import Cycle from "../models/cycleModel.js";
 import { logAudit } from "../utils/logAudit.js";
+import Group from "../models/groupModel.js";
 
 // GET /groups/:groupId/contributions — requires isGroupMember to have run first
 export const listGroupContributions = async (req, res) => {
@@ -40,13 +41,33 @@ export const getContributionById = async (req, res) => {
   try {
     const contribution = req.contribution;
 
-    const evidence = await PaymentEvidence.find({
-      contributionId: contribution._id,
-    }).sort({ createdAt: -1 });
+    const [evidence, group] = await Promise.all([
+      PaymentEvidence.find({ contributionId: contribution._id }).sort({
+        createdAt: -1,
+      }),
+      Group.findById(contribution.groupId).select("groupName paymentDetails"),
+    ]);
+
+    const details = group?.paymentDetails;
+    const hasPaymentDetails = !!(
+      details?.bankName &&
+      details?.accountName &&
+      details?.accountNumber
+    );
 
     res.status(200).json({
       ...contribution.toObject(),
       evidence,
+      paymentInstructions: hasPaymentDetails
+        ? {
+            bankName: details.bankName,
+            accountName: details.accountName,
+            accountNumber: details.accountNumber,
+            reference:
+              details.referenceNote ||
+              `${group.groupName}-C${contribution.cycleNumber}`,
+          }
+        : null,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
